@@ -1,0 +1,371 @@
+
+    <!DOCTYPE html>
+    <html lang="pt-BR">
+    <head>
+        <meta charset="UTF-8">
+        <title>Relatório de Telemetria — GRITSCH - GOI</title>
+        <style>
+@page {
+    size: A4 portrait;
+    margin: 8mm 10mm 8mm 10mm;
+    @bottom-right {
+        content: "Página " counter(page) " de " counter(pages);
+        font-family: Arial, sans-serif;
+        font-size: 6.5pt;
+        color: #6B7280;
+    }
+    @bottom-left {
+        content: "Transportes Gritsch | Torre de Controle — Relatório Oficial de Telemetria";
+        font-family: Arial, sans-serif;
+        font-size: 6.5pt;
+        color: #6B7280;
+    }
+}
+
+body {
+    font-family: Arial, Helvetica, sans-serif;
+    color: #1F2937;
+    margin: 0;
+    padding: 0;
+    font-size: 7pt;
+    line-height: 1.2;
+    background: #FFFFFF;
+}
+
+/* CABEÇALHO */
+.header-table {
+    width: 100%;
+    border-collapse: collapse;
+    border-bottom: 2px solid #1E3A5F;
+    padding-bottom: 4px;
+    margin-bottom: 6px;
+}
+.header-table td {
+    vertical-align: middle;
+}
+.logo-img {
+    width: 95px;
+    max-width: 95px;
+    height: auto;
+    max-height: 26px;
+    display: block;
+}
+.header-title {
+    text-align: right;
+}
+.header-title h1 {
+    font-size: 10.5pt;
+    font-weight: bold;
+    color: #1E3A5F;
+    margin: 0;
+}
+.header-title p {
+    font-size: 6.5pt;
+    color: #4B5563;
+    margin: 1px 0 0 0;
+}
+
+/* TÍTULOS DE SEÇÃO */
+.section-header {
+    font-size: 7.2pt;
+    font-weight: bold;
+    color: #1E3A5F;
+    text-transform: uppercase;
+    letter-spacing: 0.2px;
+    border-bottom: 1px solid #1E3A5F;
+    padding-bottom: 1.5px;
+    margin: 6px 0 3px 0;
+}
+
+/* TABELAS 100% LARGURA SEQUENCIAIS */
+.tbl-clean {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 5px;
+    font-size: 6.6pt;
+    border: 1px solid #D1D5DB;
+}
+.tbl-clean th {
+    background-color: #F3F4F6;
+    color: #111827;
+    font-weight: bold;
+    font-size: 6.2pt;
+    text-transform: uppercase;
+    padding: 2.5px 4.5px;
+    border: 1px solid #D1D5DB;
+    border-bottom: 1.2px solid #9CA3AF;
+    text-align: left;
+}
+.tbl-clean th.center, .tbl-clean td.center { text-align: center; }
+.tbl-clean th.right, .tbl-clean td.right { text-align: right; }
+.tbl-clean td {
+    padding: 2px 4.5px;
+    border: 1px solid #E5E7EB;
+    color: #374151;
+}
+.tbl-clean tr:nth-child(even) td {
+    background-color: #F9FAFB;
+}
+
+/* TEXTOS E DESTAQUES */
+.text-bold { font-weight: bold; }
+.text-danger { color: #991B1B; font-weight: bold; }
+.text-primary { color: #1E3A5F; font-weight: bold; }
+.text-muted { color: #6B7280; font-size: 6.2pt; }
+
+/* BOX INFORMATIVO SIMPLES */
+.box-info {
+    border: 1px solid #D1D5DB;
+    background-color: #F9FAFB;
+    padding: 3.5px 5px;
+    font-size: 6.2pt;
+    color: #374151;
+    margin-top: 4px;
+    border-left: 2.5px solid #1E3A5F;
+    line-height: 1.15;
+}
+
+.page-break {
+    page-break-before: always;
+}
+</style>
+    </head>
+    <body>
+        <!-- CABEÇALHO -->
+        <table class="header-table">
+            <tr>
+                <td style="width:110px;">
+                    <img src="file:///home/gabriel/Projetos/data-platform-dev/relatorios/logo_gritsch.png" class="logo-img" alt="Gritsch" />
+                </td>
+                <td class="header-title">
+                    <h1>RELATÓRIO DE TELEMETRIA & VELOCIDADE</h1>
+                    <p>Unidade: <strong>GRITSCH - GOI</strong> | Período: <strong>05/08/2026 a 19/08/2026</strong> | Emissão: <strong>19/08/2026 16:06</strong></p>
+                    <p>Destinatário: <strong>goiania@gritsch.com.br</strong> | Regional: <strong>ely@gritsch.com.br</strong></p>
+                </td>
+            </tr>
+        </table>
+
+        <!-- 1. RESUMO GERAL DA UNIDADE (TABELA) -->
+        <div class="section-header">1. Resumo Consolidado da Unidade</div>
+        <table class="tbl-clean">
+            <thead>
+                <tr>
+                    <th class="center" style="width:25%;">Total de Infrações</th>
+                    <th class="center" style="width:25%;">Veículos com Apontamento</th>
+                    <th class="center" style="width:25%;">Velocidade Máxima</th>
+                    <th class="center" style="width:25%;">Velocidade Média dos Excessos</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td class="center text-bold text-danger" style="font-size:8pt;">107 ocorrências</td>
+                    <td class="center text-bold" style="font-size:8pt;">7 veículos</td>
+                    <td class="center text-bold text-danger" style="font-size:8pt;">135 km/h</td>
+                    <td class="center text-bold" style="font-size:8pt;">120.7 km/h</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <!-- 2. VEÍCULOS OFENSORES (TABELA SEQUENCIAL) -->
+        <div class="section-header">2. Veículos com Excesso de Velocidade no Período</div>
+        <table class="tbl-clean">
+            <thead>
+                <tr>
+                    <th style="width:14%;">Placa</th>
+                    <th style="width:34%;">Modelo</th>
+                    <th style="width:14%;">Categoria</th>
+                    <th class="center" style="width:12%;">Rastreador</th>
+                    <th class="center" style="width:8%;">Qtd</th>
+                    <th class="right" style="width:9%;">Pico</th>
+                    <th class="right" style="width:9%;">Média</th>
+                </tr>
+            </thead>
+            <tbody>
+                
+        <tr>
+            <td class="text-bold text-primary">TBQ1G08</td>
+            <td>MASTER 2.3 DCI GRAND FURGÃO16V DIESEL</td>
+            <td>Pesado</td>
+            <td class="center">NUXEO</td>
+            <td class="center text-bold">56</td>
+            <td class="right text-danger">135 km/h</td>
+            <td class="right text-muted">125.1 km/h</td>
+        </tr>
+        
+        <tr>
+            <td class="text-bold text-primary">TBQ1G08</td>
+            <td>MASTER 2.3 DCI GRAND FURGÃO16V DIESEL</td>
+            <td>Pesado</td>
+            <td class="center">OMNILINK</td>
+            <td class="center text-bold">13</td>
+            <td class="right text-danger">124 km/h</td>
+            <td class="right text-muted">117.0 km/h</td>
+        </tr>
+        
+        <tr>
+            <td class="text-bold text-primary">RHC1F97</td>
+            <td>GOL 1.6 MSI FLEX 8V 5P</td>
+            <td>Leve</td>
+            <td class="center">NUXEO</td>
+            <td class="center text-bold">11</td>
+            <td class="right text-danger">126 km/h</td>
+            <td class="right text-muted">115.7 km/h</td>
+        </tr>
+        
+        <tr>
+            <td class="text-bold text-primary">SFD5C36</td>
+            <td>SPRINTER 417 FURGÃO EXT. L.T.A DIE. (E6)</td>
+            <td>Pesado</td>
+            <td class="center">OMNILINK</td>
+            <td class="center text-bold">10</td>
+            <td class="right text-danger">122 km/h</td>
+            <td class="right text-muted">115.2 km/h</td>
+        </tr>
+        
+        <tr>
+            <td class="text-bold text-primary">SDR8E04</td>
+            <td>STRADA ENDURANCE 1.4 FLEX 8V CS PLUS</td>
+            <td>Médio</td>
+            <td class="center">NUXEO</td>
+            <td class="center text-bold">9</td>
+            <td class="right text-danger">126 km/h</td>
+            <td class="right text-muted">117.0 km/h</td>
+        </tr>
+        
+        <tr>
+            <td class="text-bold text-primary">UBW4G97</td>
+            <td>SAVEIRO ROBUST 1.6 TOTAL FLEX 16V</td>
+            <td>Médio</td>
+            <td class="center">NUXEO</td>
+            <td class="center text-bold">5</td>
+            <td class="right text-danger">115 km/h</td>
+            <td class="right text-muted">113.6 km/h</td>
+        </tr>
+        
+            </tbody>
+        </table>
+
+        <!-- 3. TOP OCORRÊNCIAS MAIS GRAVES (TABELA SEQUENCIAL 100%) -->
+        <div class="section-header">3. Ocorrências com Maiores Velocidades Registradas</div>
+        <table class="tbl-clean">
+            <thead>
+                <tr>
+                    <th style="width:14%;">Placa</th>
+                    <th style="width:28%;">Modelo</th>
+                    <th class="center" style="width:12%;">Velocidade</th>
+                    <th class="center" style="width:18%;">Data / Hora</th>
+                    <th style="width:18%;">Local / Município</th>
+                    <th class="center" style="width:10%;">Origem</th>
+                </tr>
+            </thead>
+            <tbody>
+                
+        <tr>
+            <td class="text-bold text-primary">TBQ1G08</td>
+            <td>MASTER 2.3 DCI GRAND FURGÃO16V DIESEL</td>
+            <td class="center text-danger">135 km/h</td>
+            <td class="center">06/08/2026 22:04</td>
+            <td>Goiânia/Goiás</td>
+            <td class="center">NUXEO</td>
+        </tr>
+        
+        <tr>
+            <td class="text-bold text-primary">TBQ1G08</td>
+            <td>MASTER 2.3 DCI GRAND FURGÃO16V DIESEL</td>
+            <td class="center text-danger">132 km/h</td>
+            <td class="center">07/08/2026 08:07</td>
+            <td>Hidrolina/Goiás</td>
+            <td class="center">NUXEO</td>
+        </tr>
+        
+        <tr>
+            <td class="text-bold text-primary">TBQ1G08</td>
+            <td>MASTER 2.3 DCI GRAND FURGÃO16V DIESEL</td>
+            <td class="center text-danger">132 km/h</td>
+            <td class="center">07/08/2026 07:21</td>
+            <td>Campinorte/Goiás</td>
+            <td class="center">NUXEO</td>
+        </tr>
+        
+        <tr>
+            <td class="text-bold text-primary">TBQ1G08</td>
+            <td>MASTER 2.3 DCI GRAND FURGÃO16V DIESEL</td>
+            <td class="center text-danger">132 km/h</td>
+            <td class="center">07/08/2026 04:01</td>
+            <td>Campinorte/Goiás</td>
+            <td class="center">NUXEO</td>
+        </tr>
+        
+        <tr>
+            <td class="text-bold text-primary">TBQ1G08</td>
+            <td>MASTER 2.3 DCI GRAND FURGÃO16V DIESEL</td>
+            <td class="center text-danger">132 km/h</td>
+            <td class="center">07/08/2026 03:55</td>
+            <td>Uruaçu/Goiás</td>
+            <td class="center">NUXEO</td>
+        </tr>
+        
+            </tbody>
+        </table>
+
+        <!-- 4. DISTRIBUIÇÃO DIÁRIA (TABELA SEQUENCIAL 100%) -->
+        <div class="section-header">4. Evolução do Volume por Data</div>
+        <table class="tbl-clean">
+            <thead>
+                <tr>
+                    <th class="center" style="width:30%;">Data</th>
+                    <th class="center" style="width:25%;">Qtd Alertas</th>
+                    <th class="right" style="width:25%;">Pico Registrado</th>
+                    <th class="right" style="width:20%;">Média do Dia</th>
+                </tr>
+            </thead>
+            <tbody>
+                
+        <tr>
+            <td class="center text-bold">05/08/2026</td>
+            <td class="center text-bold">21</td>
+            <td class="right text-danger">132 km/h</td>
+            <td class="right text-muted">124.0 km/h</td>
+        </tr>
+        
+        <tr>
+            <td class="center text-bold">06/08/2026</td>
+            <td class="center text-bold">9</td>
+            <td class="right text-danger">135 km/h</td>
+            <td class="right text-muted">124.4 km/h</td>
+        </tr>
+        
+        <tr>
+            <td class="center text-bold">07/08/2026</td>
+            <td class="center text-bold">21</td>
+            <td class="right text-danger">132 km/h</td>
+            <td class="right text-muted">128.3 km/h</td>
+        </tr>
+        
+        <tr>
+            <td class="center text-bold">10/08/2026</td>
+            <td class="center text-bold">4</td>
+            <td class="right text-danger">126 km/h</td>
+            <td class="right text-muted">117.0 km/h</td>
+        </tr>
+        
+        <tr>
+            <td class="center text-bold">11/08/2026</td>
+            <td class="center text-bold">7</td>
+            <td class="right text-danger">126 km/h</td>
+            <td class="right text-muted">117.4 km/h</td>
+        </tr>
+        
+            </tbody>
+        </table>
+
+        <!-- INFORMAÇÕES TÉCNICAS E RODAPÉ -->
+        <div class="box-info">
+            <strong>Critérios Operacionais da Torre de Controle:</strong><br>
+            • Caminhões / Pesados: tolerância de excesso > 90 km/h | Veículos Leves / Médios / Vans: tolerância > 110 km/h.<br>
+            • Filtro corporativo de saneamento ativo: leituras espúrias (> 160 km/h) expurgadas do banco.<br>
+            • Contato / Tratativas da Torre de Controle: <strong>torredecontrole@gritsch.com.br</strong>
+        </div>
+    </body>
+    </html>
+    

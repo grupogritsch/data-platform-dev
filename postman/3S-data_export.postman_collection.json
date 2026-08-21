@@ -1,0 +1,1893 @@
+{
+  "info": {
+    "_postman_id": "e76187ea-d4b1-4de1-a9d9-a91676c5be24",
+    "name": "3S Tecnologia - data_export (SOAP)",
+    "description": "Levantamento da API 3S para a estrutura medalhao de telemetria.\n\nCOMO USAR\n1. Selecione o environment '3S - Dev' (canto superior direito).\n2. Cole a senha no CURRENT VALUE da variavel 'senha'.\n3. Abra o Console (Ctrl+Alt+C) - e la que sai o contrato de cada metodo.\n4. Rode os blocos NA ORDEM 00 -> 06, aguardando ~7s entre chamadas\n   (o limite documentado e 10 chamadas/minuto).\n\nPONTOS IMPORTANTES DA API\n- Erro vem com HTTP 200, no corpo: <string>Erro: [msg]</string>.\n  O guard no nivel da collection ja checa isso em toda request.\n- Toda resposta e xsd:string: o XML de dados vem ESCAPADO dentro de\n  <string>. O guard desescapa e publica em {{xml}}.\n- Namespace correto: http://servicos.3stecnologia.com.br/data_export\n  (o manual v2.8 mostra www.3sil.com.br nos exemplos - e legado).\n\nAssinaturas extraidas do WSDL ao vivo, nao do manual.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "00 - Conectividade & Credencial",
+      "description": "Rode PRIMEIRO. Confirma rede, TLS e qual credencial e valida.\nPonto de decisao: o .env.example traz 'referencia.locadora919'; o Code node\ndo workflow 3S atual usa 'referencia.lojas'. So um dos dois e o correto.",
+      "item": [
+        {
+          "name": "0.1 - GET WSDL",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"WSDL respondeu\", () => pm.response.to.have.status(200));",
+                  "const w = pm.response.text();",
+                  "pm.test(\"Namespace correto\", () => pm.expect(w).to.include(\"servicos.3stecnologia.com.br/data_export\"));",
+                  "const ops = [...new Set((w.match(/soapAction=\"[^\"]+\"/g) || [])",
+                  "    .map(s => s.split(\"/\").pop().replace('\"', \"\")))].sort();",
+                  "console.log(\">>> METODOS EXPOSTOS (\" + ops.length + \"):\\n\" + ops.join(\"\\n\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}?WSDL",
+              "host": [
+                "{{base_url}}"
+              ],
+              "query": [
+                {
+                  "key": "WSDL",
+                  "value": null
+                }
+              ]
+            },
+            "description": "Metadados publicos, nao consome credencial. Confirma conectividade e lista os metodos realmente disponiveis (o WSDL tem metodos que NAO estao no manual v2.8)."
+          }
+        },
+        {
+          "name": "0.2 - ValidaLogin",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Manual 3.23: retorno \"0\" = login valido",
+                  "pm.test(\"Login valido (retorno 0)\",",
+                  "    () => pm.expect(pm.response.text()).to.match(/>\\s*0\\s*</));",
+                  "console.log(\">>> CREDENCIAL OK:\", pm.environment.get(\"usuario\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/xml; charset=utf-8"
+              },
+              {
+                "key": "SOAPAction",
+                "value": "{{ns}}/ValidaLogin"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}",
+              "host": [
+                "{{base_url}}"
+              ]
+            },
+            "description": "Valida usuario/senha antes de gastar cota nos demais testes.",
+            "body": {
+              "mode": "raw",
+              "raw": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<soap:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">\n  <soap:Body>\n    <ValidaLogin xmlns=\"{{ns}}\">\n      <Usuario>{{usuario}}</Usuario>\n      <Senha>{{senha}}</Senha>\n    </ValidaLogin>\n  </soap:Body>\n</soap:Envelope>",
+              "options": {
+                "raw": {
+                  "language": "xml"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "0.3 - ValidaLogin senha errada (negativo)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// O guard da collection ja exige a presenca de 'Erro:' (nome contem \"negativo\").",
+                  "// Aqui so documentamos a mensagem literal para o tratamento de erro no n8n.",
+                  "pm.test(\"Mensagem de credencial invalida\",",
+                  "    () => pm.expect(pm.response.text()).to.match(/Erro:/i));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/xml; charset=utf-8"
+              },
+              {
+                "key": "SOAPAction",
+                "value": "{{ns}}/ValidaLogin"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}",
+              "host": [
+                "{{base_url}}"
+              ]
+            },
+            "description": "Documenta a mensagem literal de credencial invalida.",
+            "body": {
+              "mode": "raw",
+              "raw": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<soap:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">\n  <soap:Body>\n    <ValidaLogin xmlns=\"{{ns}}\">\n      <Usuario>{{usuario}}</Usuario>\n      <Senha>senha_propositalmente_errada</Senha>\n    </ValidaLogin>\n  </soap:Body>\n</soap:Envelope>",
+              "options": {
+                "raw": {
+                  "language": "xml"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "0.4 - ValidaLogin usuario alternativo",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Fallback: so rode se 0.2 falhar.",
+                  "const ok = /callback|>\\s*0\\s*</.test(pm.response.text());",
+                  "console.log(\">>> 'referencia.lojas' valido?\", ok);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/xml; charset=utf-8"
+              },
+              {
+                "key": "SOAPAction",
+                "value": "{{ns}}/ValidaLogin"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}",
+              "host": [
+                "{{base_url}}"
+              ]
+            },
+            "description": "Usuario hardcoded no Code node do workflow 3S atual. Rode SO se 0.2 falhar.",
+            "body": {
+              "mode": "raw",
+              "raw": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<soap:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">\n  <soap:Body>\n    <ValidaLogin xmlns=\"{{ns}}\">\n      <Usuario>referencia.lojas</Usuario>\n      <Senha>{{senha}}</Senha>\n    </ValidaLogin>\n  </soap:Body>\n</soap:Envelope>",
+              "options": {
+                "raw": {
+                  "language": "xml"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "01 - Cadastro",
+      "description": "Define o universo de veiculos. 1.1 alimenta id_equip_teste e placa_teste usados por todas as demais requests.",
+      "item": [
+        {
+          "name": "1.1 - ListaVeiculos",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// --- Captura de contrato: preenche a tabela 0.4-A do guia ---",
+                  "const xml = pm.collectionVariables.get(\"xml\") || \"\";",
+                  "const registro = \"tbVeiculo\";",
+                  "",
+                  "const blocos = xml.match(new RegExp(\"<\" + registro + \">[\\\\s\\\\S]*?</\" + registro + \">\", \"gi\")) || [];",
+                  "pm.test(\"Retornou registros <\" + registro + \">\", () => pm.expect(blocos.length).to.be.above(0));",
+                  "",
+                  "// Uniao das tags de uma amostra (registros podem omitir campos vazios)",
+                  "const tags = new Set();",
+                  "blocos.slice(0, 25).forEach(b =>",
+                  "    (b.match(/<([A-Za-z_][\\w.-]*)\\s*\\/?>/g) || [])",
+                  "        .forEach(t => tags.add(t.replace(/[<>\\/\\s]/g, \"\"))));",
+                  "tags.delete(registro);",
+                  "",
+                  "console.log(\"============================================================\");",
+                  "console.log(\"METODO   :\", pm.info.requestName);",
+                  "console.log(\"REGISTRO :\", registro);",
+                  "console.log(\"QTDE     :\", blocos.length);",
+                  "console.log(\"TEMPO    :\", pm.response.responseTime, \"ms   TAMANHO:\",",
+                  "            (pm.response.responseSize / 1024).toFixed(1), \"KB\");",
+                  "console.log(\"CAMPOS   :\", [...tags].join(\", \") || \"(nenhum)\");",
+                  "console.log(\"AMOSTRA  :\\n\" + (blocos[0] || \"(sem registros)\"));",
+                  "console.log(\"============================================================\");",
+                  "",
+                  "",
+                  "// Alimenta as variaveis usadas pelas demais requests",
+                  "const idEq  = xml.match(/<idEquipamento>([^<]+)<\\/idEquipamento>/i);",
+                  "const placa = xml.match(/<Placa>([^<]+)<\\/Placa>/i);",
+                  "if (idEq)  { pm.environment.set(\"id_equip_teste\", idEq[1].trim()); }",
+                  "if (placa) { pm.environment.set(\"placa_teste\",    placa[1].trim()); }",
+                  "",
+                  "console.log(\">>> TAMANHO DA FROTA 3S:\", blocos.length);",
+                  "console.log(\">>> id_equip_teste =\", pm.environment.get(\"id_equip_teste\"));",
+                  "console.log(\">>> placa_teste    =\", pm.environment.get(\"placa_teste\"));",
+                  "console.log(\">>> Anote a frota: dimensiona o backfill (10 req/min).\");"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/xml; charset=utf-8"
+              },
+              {
+                "key": "SOAPAction",
+                "value": "{{ns}}/ListaVeiculos"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}",
+              "host": [
+                "{{base_url}}"
+              ]
+            },
+            "description": "Fonte de silver.dim_veiculo_rastreador. O total dimensiona todo o backfill.",
+            "body": {
+              "mode": "raw",
+              "raw": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<soap:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">\n  <soap:Body>\n    <ListaVeiculos xmlns=\"{{ns}}\">\n      <Usuario>{{usuario}}</Usuario>\n      <Senha>{{senha}}</Senha>\n    </ListaVeiculos>\n  </soap:Body>\n</soap:Envelope>",
+              "options": {
+                "raw": {
+                  "language": "xml"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "1.2 - RetornaGrupos",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// --- Captura de contrato: preenche a tabela 0.4-A do guia ---",
+                  "const xml = pm.collectionVariables.get(\"xml\") || \"\";",
+                  "const registro = \"tbGrupo\";",
+                  "",
+                  "const blocos = xml.match(new RegExp(\"<\" + registro + \">[\\\\s\\\\S]*?</\" + registro + \">\", \"gi\")) || [];",
+                  "pm.test(\"Retornou registros <\" + registro + \">\", () => pm.expect(blocos.length).to.be.above(0));",
+                  "",
+                  "// Uniao das tags de uma amostra (registros podem omitir campos vazios)",
+                  "const tags = new Set();",
+                  "blocos.slice(0, 25).forEach(b =>",
+                  "    (b.match(/<([A-Za-z_][\\w.-]*)\\s*\\/?>/g) || [])",
+                  "        .forEach(t => tags.add(t.replace(/[<>\\/\\s]/g, \"\"))));",
+                  "tags.delete(registro);",
+                  "",
+                  "console.log(\"============================================================\");",
+                  "console.log(\"METODO   :\", pm.info.requestName);",
+                  "console.log(\"REGISTRO :\", registro);",
+                  "console.log(\"QTDE     :\", blocos.length);",
+                  "console.log(\"TEMPO    :\", pm.response.responseTime, \"ms   TAMANHO:\",",
+                  "            (pm.response.responseSize / 1024).toFixed(1), \"KB\");",
+                  "console.log(\"CAMPOS   :\", [...tags].join(\", \") || \"(nenhum)\");",
+                  "console.log(\"AMOSTRA  :\\n\" + (blocos[0] || \"(sem registros)\"));",
+                  "console.log(\"============================================================\");",
+                  ""
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/xml; charset=utf-8"
+              },
+              {
+                "key": "SOAPAction",
+                "value": "{{ns}}/RetornaGrupos"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}",
+              "host": [
+                "{{base_url}}"
+              ]
+            },
+            "description": "Nao esta no manual v2.8. Verifica se a 3S tem agrupamento que corresponda a filial (hoje a filial vem do Bluefleet via gold_dim_veiculo).",
+            "body": {
+              "mode": "raw",
+              "raw": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<soap:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">\n  <soap:Body>\n    <RetornaGrupos xmlns=\"{{ns}}\">\n      <Usuario>{{usuario}}</Usuario>\n      <Senha>{{senha}}</Senha>\n    </RetornaGrupos>\n  </soap:Body>\n</soap:Envelope>",
+              "options": {
+                "raw": {
+                  "language": "xml"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "1.3 - RetornaGruposVeiculos",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// --- Captura de contrato: preenche a tabela 0.4-A do guia ---",
+                  "const xml = pm.collectionVariables.get(\"xml\") || \"\";",
+                  "const registro = \"tbGrupoVeiculo\";",
+                  "",
+                  "const blocos = xml.match(new RegExp(\"<\" + registro + \">[\\\\s\\\\S]*?</\" + registro + \">\", \"gi\")) || [];",
+                  "pm.test(\"Retornou registros <\" + registro + \">\", () => pm.expect(blocos.length).to.be.above(0));",
+                  "",
+                  "// Uniao das tags de uma amostra (registros podem omitir campos vazios)",
+                  "const tags = new Set();",
+                  "blocos.slice(0, 25).forEach(b =>",
+                  "    (b.match(/<([A-Za-z_][\\w.-]*)\\s*\\/?>/g) || [])",
+                  "        .forEach(t => tags.add(t.replace(/[<>\\/\\s]/g, \"\"))));",
+                  "tags.delete(registro);",
+                  "",
+                  "console.log(\"============================================================\");",
+                  "console.log(\"METODO   :\", pm.info.requestName);",
+                  "console.log(\"REGISTRO :\", registro);",
+                  "console.log(\"QTDE     :\", blocos.length);",
+                  "console.log(\"TEMPO    :\", pm.response.responseTime, \"ms   TAMANHO:\",",
+                  "            (pm.response.responseSize / 1024).toFixed(1), \"KB\");",
+                  "console.log(\"CAMPOS   :\", [...tags].join(\", \") || \"(nenhum)\");",
+                  "console.log(\"AMOSTRA  :\\n\" + (blocos[0] || \"(sem registros)\"));",
+                  "console.log(\"============================================================\");",
+                  ""
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/xml; charset=utf-8"
+              },
+              {
+                "key": "SOAPAction",
+                "value": "{{ns}}/RetornaGruposVeiculos"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}",
+              "host": [
+                "{{base_url}}"
+              ]
+            },
+            "description": "Nao esta no manual. idGrupo/idVeiculo sao xsd:long. 0 = todos.",
+            "body": {
+              "mode": "raw",
+              "raw": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<soap:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">\n  <soap:Body>\n    <RetornaGruposVeiculos xmlns=\"{{ns}}\">\n      <Usuario>{{usuario}}</Usuario>\n      <Senha>{{senha}}</Senha>\n      <idGrupo>0</idGrupo>\n      <idVeiculo>0</idVeiculo>\n    </RetornaGruposVeiculos>\n  </soap:Body>\n</soap:Envelope>",
+              "options": {
+                "raw": {
+                  "language": "xml"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "1.4 - ListaSensores",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// --- Captura de contrato: preenche a tabela 0.4-A do guia ---",
+                  "const xml = pm.collectionVariables.get(\"xml\") || \"\";",
+                  "const registro = \"tbSensor\";",
+                  "",
+                  "const blocos = xml.match(new RegExp(\"<\" + registro + \">[\\\\s\\\\S]*?</\" + registro + \">\", \"gi\")) || [];",
+                  "pm.test(\"Retornou registros <\" + registro + \">\", () => pm.expect(blocos.length).to.be.above(0));",
+                  "",
+                  "// Uniao das tags de uma amostra (registros podem omitir campos vazios)",
+                  "const tags = new Set();",
+                  "blocos.slice(0, 25).forEach(b =>",
+                  "    (b.match(/<([A-Za-z_][\\w.-]*)\\s*\\/?>/g) || [])",
+                  "        .forEach(t => tags.add(t.replace(/[<>\\/\\s]/g, \"\"))));",
+                  "tags.delete(registro);",
+                  "",
+                  "console.log(\"============================================================\");",
+                  "console.log(\"METODO   :\", pm.info.requestName);",
+                  "console.log(\"REGISTRO :\", registro);",
+                  "console.log(\"QTDE     :\", blocos.length);",
+                  "console.log(\"TEMPO    :\", pm.response.responseTime, \"ms   TAMANHO:\",",
+                  "            (pm.response.responseSize / 1024).toFixed(1), \"KB\");",
+                  "console.log(\"CAMPOS   :\", [...tags].join(\", \") || \"(nenhum)\");",
+                  "console.log(\"AMOSTRA  :\\n\" + (blocos[0] || \"(sem registros)\"));",
+                  "console.log(\"============================================================\");",
+                  "",
+                  "",
+                  "const nomes = [...xml.matchAll(/<NomeSensorExibicao>([^<]+)</gi)].map(m => m[1]);",
+                  "const ids   = [...xml.matchAll(/<idSensor>([^<]+)</gi)].map(m => m[1]);",
+                  "console.log(\">>> SENSORES:\", nomes.join(\" | \"));",
+                  "console.log(\">>> idSensor :\", ids.join(\" | \"));",
+                  "if (ids[0]) pm.environment.set(\"id_sensor_teste\", ids[0]);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/xml; charset=utf-8"
+              },
+              {
+                "key": "SOAPAction",
+                "value": "{{ns}}/ListaSensores"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}",
+              "host": [
+                "{{base_url}}"
+              ]
+            },
+            "description": "Descobre os sensores instalados e seus idSensor (usados no bloco 04).",
+            "body": {
+              "mode": "raw",
+              "raw": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<soap:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">\n  <soap:Body>\n    <ListaSensores xmlns=\"{{ns}}\">\n      <Usuario>{{usuario}}</Usuario>\n      <Senha>{{senha}}</Senha>\n      <idEquipamento>{{id_equip_teste}}</idEquipamento>\n    </ListaSensores>\n  </soap:Body>\n</soap:Envelope>",
+              "options": {
+                "raw": {
+                  "language": "xml"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 - Posicoes",
+      "description": "2.4 responde a pergunta central do backfill: HistoricoPosicaoCompleto (so no WSDL, ausente do manual) traz os campos que o HistoricoPosicao omite?",
+      "item": [
+        {
+          "name": "2.1 - ListaUltimaPosicaoVeiculos",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// --- Captura de contrato: preenche a tabela 0.4-A do guia ---",
+                  "const xml = pm.collectionVariables.get(\"xml\") || \"\";",
+                  "const registro = \"tbPosicao\";",
+                  "",
+                  "const blocos = xml.match(new RegExp(\"<\" + registro + \">[\\\\s\\\\S]*?</\" + registro + \">\", \"gi\")) || [];",
+                  "pm.test(\"Retornou registros <\" + registro + \">\", () => pm.expect(blocos.length).to.be.above(0));",
+                  "",
+                  "// Uniao das tags de uma amostra (registros podem omitir campos vazios)",
+                  "const tags = new Set();",
+                  "blocos.slice(0, 25).forEach(b =>",
+                  "    (b.match(/<([A-Za-z_][\\w.-]*)\\s*\\/?>/g) || [])",
+                  "        .forEach(t => tags.add(t.replace(/[<>\\/\\s]/g, \"\"))));",
+                  "tags.delete(registro);",
+                  "",
+                  "console.log(\"============================================================\");",
+                  "console.log(\"METODO   :\", pm.info.requestName);",
+                  "console.log(\"REGISTRO :\", registro);",
+                  "console.log(\"QTDE     :\", blocos.length);",
+                  "console.log(\"TEMPO    :\", pm.response.responseTime, \"ms   TAMANHO:\",",
+                  "            (pm.response.responseSize / 1024).toFixed(1), \"KB\");",
+                  "console.log(\"CAMPOS   :\", [...tags].join(\", \") || \"(nenhum)\");",
+                  "console.log(\"AMOSTRA  :\\n\" + (blocos[0] || \"(sem registros)\"));",
+                  "console.log(\"============================================================\");",
+                  "",
+                  "",
+                  "console.log(\">>> POSICOES RETORNADAS:\", blocos.length);",
+                  "console.log(\">>> Compare com a frota do teste 1.1.\");",
+                  "console.log(\">>> A diferenca = veiculos sem comunicacao -> regra do gold_v_frota_sem_sinal.\");"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/xml; charset=utf-8"
+              },
+              {
+                "key": "SOAPAction",
+                "value": "{{ns}}/ListaUltimaPosicaoVeiculos"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}",
+              "host": [
+                "{{base_url}}"
+              ]
+            },
+            "description": "Metodo recomendado pelo manual. Fonte de silver.fato_posicao.",
+            "body": {
+              "mode": "raw",
+              "raw": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<soap:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">\n  <soap:Body>\n    <ListaUltimaPosicaoVeiculos xmlns=\"{{ns}}\">\n      <Usuario>{{usuario}}</Usuario>\n      <Senha>{{senha}}</Senha>\n    </ListaUltimaPosicaoVeiculos>\n  </soap:Body>\n</soap:Envelope>",
+              "options": {
+                "raw": {
+                  "language": "xml"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "2.2 - ListaUltimaPosicaoVeiculoPlaca",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// --- Captura de contrato: preenche a tabela 0.4-A do guia ---",
+                  "const xml = pm.collectionVariables.get(\"xml\") || \"\";",
+                  "const registro = \"tbPosicao\";",
+                  "",
+                  "const blocos = xml.match(new RegExp(\"<\" + registro + \">[\\\\s\\\\S]*?</\" + registro + \">\", \"gi\")) || [];",
+                  "pm.test(\"Retornou registros <\" + registro + \">\", () => pm.expect(blocos.length).to.be.above(0));",
+                  "",
+                  "// Uniao das tags de uma amostra (registros podem omitir campos vazios)",
+                  "const tags = new Set();",
+                  "blocos.slice(0, 25).forEach(b =>",
+                  "    (b.match(/<([A-Za-z_][\\w.-]*)\\s*\\/?>/g) || [])",
+                  "        .forEach(t => tags.add(t.replace(/[<>\\/\\s]/g, \"\"))));",
+                  "tags.delete(registro);",
+                  "",
+                  "console.log(\"============================================================\");",
+                  "console.log(\"METODO   :\", pm.info.requestName);",
+                  "console.log(\"REGISTRO :\", registro);",
+                  "console.log(\"QTDE     :\", blocos.length);",
+                  "console.log(\"TEMPO    :\", pm.response.responseTime, \"ms   TAMANHO:\",",
+                  "            (pm.response.responseSize / 1024).toFixed(1), \"KB\");",
+                  "console.log(\"CAMPOS   :\", [...tags].join(\", \") || \"(nenhum)\");",
+                  "console.log(\"AMOSTRA  :\\n\" + (blocos[0] || \"(sem registros)\"));",
+                  "console.log(\"============================================================\");",
+                  ""
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/xml; charset=utf-8"
+              },
+              {
+                "key": "SOAPAction",
+                "value": "{{ns}}/ListaUltimaPosicaoVeiculoPlaca"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}",
+              "host": [
+                "{{base_url}}"
+              ]
+            },
+            "description": "Nao esta no manual. Consulta por placa, sem precisar do idEquipamento.",
+            "body": {
+              "mode": "raw",
+              "raw": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<soap:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">\n  <soap:Body>\n    <ListaUltimaPosicaoVeiculoPlaca xmlns=\"{{ns}}\">\n      <Usuario>{{usuario}}</Usuario>\n      <Senha>{{senha}}</Senha>\n      <Placa>{{placa_teste}}</Placa>\n    </ListaUltimaPosicaoVeiculoPlaca>\n  </soap:Body>\n</soap:Envelope>",
+              "options": {
+                "raw": {
+                  "language": "xml"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "2.3 - HistoricoPosicao",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// --- Captura de contrato: preenche a tabela 0.4-A do guia ---",
+                  "const xml = pm.collectionVariables.get(\"xml\") || \"\";",
+                  "const registro = \"tbPosicao\";",
+                  "",
+                  "const blocos = xml.match(new RegExp(\"<\" + registro + \">[\\\\s\\\\S]*?</\" + registro + \">\", \"gi\")) || [];",
+                  "pm.test(\"Retornou registros <\" + registro + \">\", () => pm.expect(blocos.length).to.be.above(0));",
+                  "",
+                  "// Uniao das tags de uma amostra (registros podem omitir campos vazios)",
+                  "const tags = new Set();",
+                  "blocos.slice(0, 25).forEach(b =>",
+                  "    (b.match(/<([A-Za-z_][\\w.-]*)\\s*\\/?>/g) || [])",
+                  "        .forEach(t => tags.add(t.replace(/[<>\\/\\s]/g, \"\"))));",
+                  "tags.delete(registro);",
+                  "",
+                  "console.log(\"============================================================\");",
+                  "console.log(\"METODO   :\", pm.info.requestName);",
+                  "console.log(\"REGISTRO :\", registro);",
+                  "console.log(\"QTDE     :\", blocos.length);",
+                  "console.log(\"TEMPO    :\", pm.response.responseTime, \"ms   TAMANHO:\",",
+                  "            (pm.response.responseSize / 1024).toFixed(1), \"KB\");",
+                  "console.log(\"CAMPOS   :\", [...tags].join(\", \") || \"(nenhum)\");",
+                  "console.log(\"AMOSTRA  :\\n\" + (blocos[0] || \"(sem registros)\"));",
+                  "console.log(\"============================================================\");",
+                  "",
+                  "",
+                  "// O manual mostra <tbPosicao> REDUZIDO aqui. Confirmar o que falta:",
+                  "[\"idPosicao\",\"Placa\",\"idEquipamento\",\"Ignicao\"].forEach(t =>",
+                  "    console.log(\"   tem <\" + t + \">? \", new RegExp(\"<\"+t+\">\",\"i\").test(xml)));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/xml; charset=utf-8"
+              },
+              {
+                "key": "SOAPAction",
+                "value": "{{ns}}/HistoricoPosicao"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}",
+              "host": [
+                "{{base_url}}"
+              ]
+            },
+            "description": "Metodo usado pelo backfill ATUAL. O manual indica retorno reduzido (sem idPosicao/Placa/Ignicao/idEquipamento) - por isso o parser atual grava NULL.",
+            "body": {
+              "mode": "raw",
+              "raw": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<soap:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">\n  <soap:Body>\n    <HistoricoPosicao xmlns=\"{{ns}}\">\n      <Usuario>{{usuario}}</Usuario>\n      <Senha>{{senha}}</Senha>\n      <idEquipamento>{{id_equip_teste}}</idEquipamento>\n      <DataInicio>{{data_inicio}}</DataInicio>\n      <DataFim>{{data_fim}}</DataFim>\n    </HistoricoPosicao>\n  </soap:Body>\n</soap:Envelope>",
+              "options": {
+                "raw": {
+                  "language": "xml"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "2.4 - HistoricoPosicaoCompleto (DECISIVO)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// --- Captura de contrato: preenche a tabela 0.4-A do guia ---",
+                  "const xml = pm.collectionVariables.get(\"xml\") || \"\";",
+                  "const registro = \"tbPosicao\";",
+                  "",
+                  "const blocos = xml.match(new RegExp(\"<\" + registro + \">[\\\\s\\\\S]*?</\" + registro + \">\", \"gi\")) || [];",
+                  "pm.test(\"Retornou registros <\" + registro + \">\", () => pm.expect(blocos.length).to.be.above(0));",
+                  "",
+                  "// Uniao das tags de uma amostra (registros podem omitir campos vazios)",
+                  "const tags = new Set();",
+                  "blocos.slice(0, 25).forEach(b =>",
+                  "    (b.match(/<([A-Za-z_][\\w.-]*)\\s*\\/?>/g) || [])",
+                  "        .forEach(t => tags.add(t.replace(/[<>\\/\\s]/g, \"\"))));",
+                  "tags.delete(registro);",
+                  "",
+                  "console.log(\"============================================================\");",
+                  "console.log(\"METODO   :\", pm.info.requestName);",
+                  "console.log(\"REGISTRO :\", registro);",
+                  "console.log(\"QTDE     :\", blocos.length);",
+                  "console.log(\"TEMPO    :\", pm.response.responseTime, \"ms   TAMANHO:\",",
+                  "            (pm.response.responseSize / 1024).toFixed(1), \"KB\");",
+                  "console.log(\"CAMPOS   :\", [...tags].join(\", \") || \"(nenhum)\");",
+                  "console.log(\"AMOSTRA  :\\n\" + (blocos[0] || \"(sem registros)\"));",
+                  "console.log(\"============================================================\");",
+                  "",
+                  "",
+                  "// PONTO DE DECISAO: se estes 4 testes passarem, este metodo vira o do backfill.",
+                  "[\"idPosicao\",\"Placa\",\"idEquipamento\",\"Ignicao\"].forEach(tag =>",
+                  "    pm.test(\"Completo traz <\" + tag + \">\",",
+                  "        () => pm.expect(xml).to.match(new RegExp(\"<\" + tag + \">\", \"i\"))));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/xml; charset=utf-8"
+              },
+              {
+                "key": "SOAPAction",
+                "value": "{{ns}}/HistoricoPosicaoCompleto"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}",
+              "host": [
+                "{{base_url}}"
+              ]
+            },
+            "description": "NAO ESTA NO MANUAL v2.8 - contrato desconhecido. Se trouxer idPosicao/Placa/idEquipamento, substitui o HistoricoPosicao no backfill.",
+            "body": {
+              "mode": "raw",
+              "raw": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<soap:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">\n  <soap:Body>\n    <HistoricoPosicaoCompleto xmlns=\"{{ns}}\">\n      <Usuario>{{usuario}}</Usuario>\n      <Senha>{{senha}}</Senha>\n      <idEquipamento>{{id_equip_teste}}</idEquipamento>\n      <DataInicio>{{data_inicio}}</DataInicio>\n      <DataFim>{{data_fim}}</DataFim>\n    </HistoricoPosicaoCompleto>\n  </soap:Body>\n</soap:Envelope>",
+              "options": {
+                "raw": {
+                  "language": "xml"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "2.5 - HistoricoPosicaoCompleto janela 30 dias",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// --- Captura de contrato: preenche a tabela 0.4-A do guia ---",
+                  "const xml = pm.collectionVariables.get(\"xml\") || \"\";",
+                  "const registro = \"tbPosicao\";",
+                  "",
+                  "const blocos = xml.match(new RegExp(\"<\" + registro + \">[\\\\s\\\\S]*?</\" + registro + \">\", \"gi\")) || [];",
+                  "pm.test(\"Retornou registros <\" + registro + \">\", () => pm.expect(blocos.length).to.be.above(0));",
+                  "",
+                  "// Uniao das tags de uma amostra (registros podem omitir campos vazios)",
+                  "const tags = new Set();",
+                  "blocos.slice(0, 25).forEach(b =>",
+                  "    (b.match(/<([A-Za-z_][\\w.-]*)\\s*\\/?>/g) || [])",
+                  "        .forEach(t => tags.add(t.replace(/[<>\\/\\s]/g, \"\"))));",
+                  "tags.delete(registro);",
+                  "",
+                  "console.log(\"============================================================\");",
+                  "console.log(\"METODO   :\", pm.info.requestName);",
+                  "console.log(\"REGISTRO :\", registro);",
+                  "console.log(\"QTDE     :\", blocos.length);",
+                  "console.log(\"TEMPO    :\", pm.response.responseTime, \"ms   TAMANHO:\",",
+                  "            (pm.response.responseSize / 1024).toFixed(1), \"KB\");",
+                  "console.log(\"CAMPOS   :\", [...tags].join(\", \") || \"(nenhum)\");",
+                  "console.log(\"AMOSTRA  :\\n\" + (blocos[0] || \"(sem registros)\"));",
+                  "console.log(\"============================================================\");",
+                  "",
+                  "",
+                  "console.log(\">>> TESTE DE VOLUME - 30 DIAS\");",
+                  "console.log(\">>> Numero 'redondo' (1000/5000) = teto implicito de paginacao.\");",
+                  "console.log(\">>> Define se da para pedir mes inteiro ou fatiar em janelas menores.\");"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/xml; charset=utf-8"
+              },
+              {
+                "key": "SOAPAction",
+                "value": "{{ns}}/HistoricoPosicaoCompleto"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}",
+              "host": [
+                "{{base_url}}"
+              ]
+            },
+            "description": "Teste de volume: mede teto de registros, tamanho e tempo de resposta.",
+            "body": {
+              "mode": "raw",
+              "raw": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<soap:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">\n  <soap:Body>\n    <HistoricoPosicaoCompleto xmlns=\"{{ns}}\">\n      <Usuario>{{usuario}}</Usuario>\n      <Senha>{{senha}}</Senha>\n      <idEquipamento>{{id_equip_teste}}</idEquipamento>\n      <DataInicio>01/07/2026</DataInicio>\n      <DataFim>30/07/2026</DataFim>\n    </HistoricoPosicaoCompleto>\n  </soap:Body>\n</soap:Envelope>",
+              "options": {
+                "raw": {
+                  "language": "xml"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 - RetornaDados (metodo central)",
+      "description": "RetornaDados com idEquipamento=0 traz posicoes + sensores + telemetria +\nalertas + cercas de TODA a frota em UMA chamada. E o que resolve o limite\nde 10 req/min: 1 chamada por ciclo em vez de N.\n\nSemantica de cada id: -1 = so estrutura | 0 = ID da ultima ocorrencia |\n<id> = dados a partir daquele ID.\n\nORDEM: 3.1 (bootstrap) -> 3.3 (incremental) -> 3.3 de novo.",
+      "item": [
+        {
+          "name": "3.1 - Bootstrap (todos os cursores = 0)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// --- Captura de contrato: preenche a tabela 0.4-A do guia ---",
+                  "const xml = pm.collectionVariables.get(\"xml\") || \"\";",
+                  "const registro = \"Dados\";",
+                  "",
+                  "const blocos = xml.match(new RegExp(\"<\" + registro + \">[\\\\s\\\\S]*?</\" + registro + \">\", \"gi\")) || [];",
+                  "pm.test(\"Retornou registros <\" + registro + \">\", () => pm.expect(blocos.length).to.be.above(0));",
+                  "",
+                  "// Uniao das tags de uma amostra (registros podem omitir campos vazios)",
+                  "const tags = new Set();",
+                  "blocos.slice(0, 25).forEach(b =>",
+                  "    (b.match(/<([A-Za-z_][\\w.-]*)\\s*\\/?>/g) || [])",
+                  "        .forEach(t => tags.add(t.replace(/[<>\\/\\s]/g, \"\"))));",
+                  "tags.delete(registro);",
+                  "",
+                  "console.log(\"============================================================\");",
+                  "console.log(\"METODO   :\", pm.info.requestName);",
+                  "console.log(\"REGISTRO :\", registro);",
+                  "console.log(\"QTDE     :\", blocos.length);",
+                  "console.log(\"TEMPO    :\", pm.response.responseTime, \"ms   TAMANHO:\",",
+                  "            (pm.response.responseSize / 1024).toFixed(1), \"KB\");",
+                  "console.log(\"CAMPOS   :\", [...tags].join(\", \") || \"(nenhum)\");",
+                  "console.log(\"AMOSTRA  :\\n\" + (blocos[0] || \"(sem registros)\"));",
+                  "console.log(\"============================================================\");",
+                  "",
+                  "",
+                  "// --- Captura os cursores (watermark) para a ingestao incremental ---",
+                  "const cur = {",
+                  "  wm_posicao:           /<idPosicao>(\\d+)<\\/idPosicao>/i,",
+                  "  wm_sensor:            /<idEstadoSensor>(\\d+)<\\/idEstadoSensor>/i,",
+                  "  wm_telemetria:        /<idTelemetria>(\\d+)<\\/idTelemetria>/i,",
+                  "  wm_alerta_velocidade: /<idAlertaVelocidade>(\\d+)<\\/idAlertaVelocidade>/i,",
+                  "  wm_alerta_sensor:     /<idAlertaSensor>(\\d+)<\\/idAlertaSensor>/i,",
+                  "  wm_alerta_temperatura:/<idAlertaTemperatura>(\\d+)<\\/idAlertaTemperatura>/i,",
+                  "  wm_cerca_alvo:        /<idCercaAlvo>(\\d+)<\\/idCercaAlvo>/i,",
+                  "  wm_cerca_logradouro:  /<idCercaLogradouro>(\\d+)<\\/idCercaLogradouro>/i,",
+                  "  wm_cerca_poligonal:   /<idCercaPoligon[ao][l]?>(\\d+)<\\/idCercaPoligon[ao][l]?>/i,",
+                  "  wm_cerca_rota:        /<idCercaRota>(\\d+)<\\/idCercaRota>/i,",
+                  "};",
+                  "console.log(\"============ CURSORES (watermark) ============\");",
+                  "let achados = 0;",
+                  "for (const [k, re] of Object.entries(cur)) {",
+                  "  const m = xml.match(re);",
+                  "  if (m) { pm.environment.set(k, m[1]); console.log(\"  \" + k.padEnd(24), \"=\", m[1]); achados++; }",
+                  "  else   { console.log(\"  \" + k.padEnd(24), \"= AUSENTE (sem dado ou tag com outro nome)\"); }",
+                  "}",
+                  "console.log(\"==============================================\");",
+                  "pm.test(\"Capturou ao menos um cursor\", () => pm.expect(achados).to.be.above(0));",
+                  "console.log(\">>> Anote os AUSENTES: mudam a modelagem do silver.\");",
+                  ""
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/xml; charset=utf-8"
+              },
+              {
+                "key": "SOAPAction",
+                "value": "{{ns}}/RetornaDados"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}",
+              "host": [
+                "{{base_url}}"
+              ]
+            },
+            "description": "Todos em 0: devolve APENAS os IDs da ultima ocorrencia, sem dados. E assim que se descobre o ponto de partida do watermark. Grava as variaveis wm_* no environment.",
+            "body": {
+              "mode": "raw",
+              "raw": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<soap:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">\n  <soap:Body>\n    <RetornaDados xmlns=\"{{ns}}\">\n      <Usuario>{{usuario}}</Usuario>\n      <Senha>{{senha}}</Senha>\n      <idEquipamento>0</idEquipamento>\n      <idPosicao>0</idPosicao>\n      <idSensor>0</idSensor>\n      <idMensagem>-1</idMensagem>\n      <idTelemetria>0</idTelemetria>\n      <idAlertaVelocidade>0</idAlertaVelocidade>\n      <idAlertaSensor>0</idAlertaSensor>\n      <idAlertaTemperatura>0</idAlertaTemperatura>\n      <idAlertaTempoOperacaoContinua>-1</idAlertaTempoOperacaoContinua>\n      <idAlertaJornadaDiaria>-1</idAlertaJornadaDiaria>\n      <idAlertaMovimentacaoindevida>-1</idAlertaMovimentacaoindevida>\n      <idCercaAlvo>0</idCercaAlvo>\n      <idCercaCheckPoint>-1</idCercaCheckPoint>\n      <idCercaLogradouro>0</idCercaLogradouro>\n      <idCercaPoligonal>0</idCercaPoligonal>\n      <idCercaRota>0</idCercaRota>\n    </RetornaDados>\n  </soap:Body>\n</soap:Envelope>",
+              "options": {
+                "raw": {
+                  "language": "xml"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "3.2 - Estrutura vazia (todos = -1)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Forma mais barata de documentar a hierarquia completa, sem trafegar dados.",
+                  "const xml = pm.collectionVariables.get(\"xml\") || \"\";",
+                  "const blocos = [...new Set((xml.match(/<([A-Z][A-Za-z]+)>/g) || [])",
+                  "    .map(t => t.replace(/[<>]/g, \"\")))];",
+                  "console.log(\"============================================================\");",
+                  "console.log(\"ESTRUTURA COMPLETA DE <Dados>:\");",
+                  "console.log(blocos.join(\"\\n\"));",
+                  "console.log(\"XML BRUTO:\\n\" + xml);",
+                  "console.log(\"============================================================\");",
+                  "pm.test(\"Retornou a estrutura\", () => pm.expect(xml).to.include(\"Dados\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/xml; charset=utf-8"
+              },
+              {
+                "key": "SOAPAction",
+                "value": "{{ns}}/RetornaDados"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}",
+              "host": [
+                "{{base_url}}"
+              ]
+            },
+            "description": "Todos em -1: envelope vazio com todos os blocos. Documenta a hierarquia (<Dados> -> Posicao, Sensor, Telemetria/VeiculoConsolidado, AlertaVelocidade, Cerca*).",
+            "body": {
+              "mode": "raw",
+              "raw": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<soap:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">\n  <soap:Body>\n    <RetornaDados xmlns=\"{{ns}}\">\n      <Usuario>{{usuario}}</Usuario>\n      <Senha>{{senha}}</Senha>\n      <idEquipamento>-1</idEquipamento>\n      <idPosicao>-1</idPosicao>\n      <idSensor>-1</idSensor>\n      <idMensagem>-1</idMensagem>\n      <idTelemetria>-1</idTelemetria>\n      <idAlertaVelocidade>-1</idAlertaVelocidade>\n      <idAlertaSensor>-1</idAlertaSensor>\n      <idAlertaTemperatura>-1</idAlertaTemperatura>\n      <idAlertaTempoOperacaoContinua>-1</idAlertaTempoOperacaoContinua>\n      <idAlertaJornadaDiaria>-1</idAlertaJornadaDiaria>\n      <idAlertaMovimentacaoindevida>-1</idAlertaMovimentacaoindevida>\n      <idCercaAlvo>-1</idCercaAlvo>\n      <idCercaCheckPoint>-1</idCercaCheckPoint>\n      <idCercaLogradouro>-1</idCercaLogradouro>\n      <idCercaPoligonal>-1</idCercaPoligonal>\n      <idCercaRota>-1</idCercaRota>\n    </RetornaDados>\n  </soap:Body>\n</soap:Envelope>",
+              "options": {
+                "raw": {
+                  "language": "xml"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "3.3 - Incremental (com cursores)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const xml = pm.collectionVariables.get(\"xml\") || \"\";",
+                  "console.log(\"============ VOLUME POR DOMINIO ============\");",
+                  "[[\"tbPosicao\",\"posicoes\"],[\"tbEstadoSensor\",\"sensores\"],",
+                  " [\"tbVeiculoConsolidado\",\"telemetria\"],[\"tbAlertaVelocidade\",\"alerta velocidade\"],",
+                  " [\"tbAlertaSensor\",\"alerta sensor\"],[\"tbAlertaTemperatura\",\"alerta temperatura\"],",
+                  " [\"tbCercaAlvo\",\"cerca alvo\"],[\"tbCercaLogradouro\",\"cerca logradouro\"],",
+                  " [\"tbCercaPoligonal\",\"cerca poligonal\"],[\"tbCercaRota\",\"cerca rota\"]]",
+                  " .forEach(([tag, label]) => {",
+                  "    const n = (xml.match(new RegExp(\"<\" + tag + \">\", \"gi\")) || []).length;",
+                  "    console.log(\"  \" + label.padEnd(22), n);",
+                  " });",
+                  "console.log(\"TEMPO:\", pm.response.responseTime, \"ms  TAMANHO:\",",
+                  "            (pm.response.responseSize/1024).toFixed(1), \"KB\");",
+                  "console.log(\"===========================================\");",
+                  "console.log(\">>> RODE ESTA REQUEST 2x SEGUIDAS com o MESMO cursor.\");",
+                  "console.log(\">>> Mesmo conjunto nas duas = cursor exclusivo (> id) -> watermark confiavel.\");",
+                  "console.log(\">>> Conjunto diferente = cursor inclusivo (>= id) -> precisa dedup no bronze.\");"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/xml; charset=utf-8"
+              },
+              {
+                "key": "SOAPAction",
+                "value": "{{ns}}/RetornaDados"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}",
+              "host": [
+                "{{base_url}}"
+              ]
+            },
+            "description": "PONTO DE DECISAO: rode 2x seguidas com o mesmo cursor para descobrir se o cursor e exclusivo. Rode de novo 15 min depois para medir o volume por ciclo (define a frequencia do schedule no n8n).",
+            "body": {
+              "mode": "raw",
+              "raw": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<soap:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">\n  <soap:Body>\n    <RetornaDados xmlns=\"{{ns}}\">\n      <Usuario>{{usuario}}</Usuario>\n      <Senha>{{senha}}</Senha>\n      <idEquipamento>0</idEquipamento>\n      <idPosicao>{{wm_posicao}}</idPosicao>\n      <idSensor>{{wm_sensor}}</idSensor>\n      <idMensagem>-1</idMensagem>\n      <idTelemetria>{{wm_telemetria}}</idTelemetria>\n      <idAlertaVelocidade>{{wm_alerta_velocidade}}</idAlertaVelocidade>\n      <idAlertaSensor>{{wm_alerta_sensor}}</idAlertaSensor>\n      <idAlertaTemperatura>{{wm_alerta_temperatura}}</idAlertaTemperatura>\n      <idAlertaTempoOperacaoContinua>-1</idAlertaTempoOperacaoContinua>\n      <idAlertaJornadaDiaria>-1</idAlertaJornadaDiaria>\n      <idAlertaMovimentacaoindevida>-1</idAlertaMovimentacaoindevida>\n      <idCercaAlvo>{{wm_cerca_alvo}}</idCercaAlvo>\n      <idCercaCheckPoint>-1</idCercaCheckPoint>\n      <idCercaLogradouro>{{wm_cerca_logradouro}}</idCercaLogradouro>\n      <idCercaPoligonal>{{wm_cerca_poligonal}}</idCercaPoligonal>\n      <idCercaRota>{{wm_cerca_rota}}</idCercaRota>\n    </RetornaDados>\n  </soap:Body>\n</soap:Envelope>",
+              "options": {
+                "raw": {
+                  "language": "xml"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "3.4 - Telemetria isolada",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// --- Captura de contrato: preenche a tabela 0.4-A do guia ---",
+                  "const xml = pm.collectionVariables.get(\"xml\") || \"\";",
+                  "const registro = \"tbVeiculoConsolidado\";",
+                  "",
+                  "const blocos = xml.match(new RegExp(\"<\" + registro + \">[\\\\s\\\\S]*?</\" + registro + \">\", \"gi\")) || [];",
+                  "pm.test(\"Retornou registros <\" + registro + \">\", () => pm.expect(blocos.length).to.be.above(0));",
+                  "",
+                  "// Uniao das tags de uma amostra (registros podem omitir campos vazios)",
+                  "const tags = new Set();",
+                  "blocos.slice(0, 25).forEach(b =>",
+                  "    (b.match(/<([A-Za-z_][\\w.-]*)\\s*\\/?>/g) || [])",
+                  "        .forEach(t => tags.add(t.replace(/[<>\\/\\s]/g, \"\"))));",
+                  "tags.delete(registro);",
+                  "",
+                  "console.log(\"============================================================\");",
+                  "console.log(\"METODO   :\", pm.info.requestName);",
+                  "console.log(\"REGISTRO :\", registro);",
+                  "console.log(\"QTDE     :\", blocos.length);",
+                  "console.log(\"TEMPO    :\", pm.response.responseTime, \"ms   TAMANHO:\",",
+                  "            (pm.response.responseSize / 1024).toFixed(1), \"KB\");",
+                  "console.log(\"CAMPOS   :\", [...tags].join(\", \") || \"(nenhum)\");",
+                  "console.log(\"AMOSTRA  :\\n\" + (blocos[0] || \"(sem registros)\"));",
+                  "console.log(\"============================================================\");",
+                  "",
+                  "",
+                  "console.log(\">>> Bloco mais rico da API (~35 campos no manual).\");",
+                  "console.log(\">>> CONFIRMAR: granularidade e 1 linha por veiculo por DIA?\");",
+                  "const datas = [...new Set([...xml.matchAll(/<Data>([^<]+)</gi)].map(m => m[1]))];",
+                  "const veics = [...new Set([...xml.matchAll(/<idVeiculo>([^<]+)</gi)].map(m => m[1]))];",
+                  "console.log(\">>> datas distintas:\", datas.length, \"| veiculos distintos:\", veics.length,",
+                  "            \"| registros:\", blocos.length);",
+                  "console.log(\">>> Se registros ~= datas * veiculos, a granularidade e veiculo/dia.\");"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/xml; charset=utf-8"
+              },
+              {
+                "key": "SOAPAction",
+                "value": "{{ns}}/RetornaDados"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}",
+              "host": [
+                "{{base_url}}"
+              ]
+            },
+            "description": "Todo o resto em -1. Base direta de silver.fato_telemetria_diaria: KMTotal, TempoMovimento, TempoMarchaLenta, VelocidadeMaxima, TempoBanguela, etc.",
+            "body": {
+              "mode": "raw",
+              "raw": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<soap:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">\n  <soap:Body>\n    <RetornaDados xmlns=\"{{ns}}\">\n      <Usuario>{{usuario}}</Usuario>\n      <Senha>{{senha}}</Senha>\n      <idEquipamento>0</idEquipamento>\n      <idPosicao>-1</idPosicao>\n      <idSensor>-1</idSensor>\n      <idMensagem>-1</idMensagem>\n      <idTelemetria>{{wm_telemetria}}</idTelemetria>\n      <idAlertaVelocidade>-1</idAlertaVelocidade>\n      <idAlertaSensor>-1</idAlertaSensor>\n      <idAlertaTemperatura>-1</idAlertaTemperatura>\n      <idAlertaTempoOperacaoContinua>-1</idAlertaTempoOperacaoContinua>\n      <idAlertaJornadaDiaria>-1</idAlertaJornadaDiaria>\n      <idAlertaMovimentacaoindevida>-1</idAlertaMovimentacaoindevida>\n      <idCercaAlvo>-1</idCercaAlvo>\n      <idCercaCheckPoint>-1</idCercaCheckPoint>\n      <idCercaLogradouro>-1</idCercaLogradouro>\n      <idCercaPoligonal>-1</idCercaPoligonal>\n      <idCercaRota>-1</idCercaRota>\n    </RetornaDados>\n  </soap:Body>\n</soap:Envelope>",
+              "options": {
+                "raw": {
+                  "language": "xml"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 - Eventos & Cercas",
+      "description": "Compare os campos daqui com o que o RetornaDados (3.3) ja devolve.\nSe baterem, o RetornaDados cobre tudo e estes metodos ficam so para backfill.",
+      "item": [
+        {
+          "name": "4.1 - HistoricoOcorrenciaVelocidade (logradouro True)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// --- Captura de contrato: preenche a tabela 0.4-A do guia ---",
+                  "const xml = pm.collectionVariables.get(\"xml\") || \"\";",
+                  "const registro = \"tbOcorrenciaAlerta\";",
+                  "",
+                  "const blocos = xml.match(new RegExp(\"<\" + registro + \">[\\\\s\\\\S]*?</\" + registro + \">\", \"gi\")) || [];",
+                  "pm.test(\"Retornou registros <\" + registro + \">\", () => pm.expect(blocos.length).to.be.above(0));",
+                  "",
+                  "// Uniao das tags de uma amostra (registros podem omitir campos vazios)",
+                  "const tags = new Set();",
+                  "blocos.slice(0, 25).forEach(b =>",
+                  "    (b.match(/<([A-Za-z_][\\w.-]*)\\s*\\/?>/g) || [])",
+                  "        .forEach(t => tags.add(t.replace(/[<>\\/\\s]/g, \"\"))));",
+                  "tags.delete(registro);",
+                  "",
+                  "console.log(\"============================================================\");",
+                  "console.log(\"METODO   :\", pm.info.requestName);",
+                  "console.log(\"REGISTRO :\", registro);",
+                  "console.log(\"QTDE     :\", blocos.length);",
+                  "console.log(\"TEMPO    :\", pm.response.responseTime, \"ms   TAMANHO:\",",
+                  "            (pm.response.responseSize / 1024).toFixed(1), \"KB\");",
+                  "console.log(\"CAMPOS   :\", [...tags].join(\", \") || \"(nenhum)\");",
+                  "console.log(\"AMOSTRA  :\\n\" + (blocos[0] || \"(sem registros)\"));",
+                  "console.log(\"============================================================\");",
+                  "",
+                  "",
+                  "pm.collectionVariables.set(\"_tam_com_log\", pm.response.responseSize);",
+                  "console.log(\">>> Fonte de silver.fato_evento (EXCESSO_VELOCIDADE).\");"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/xml; charset=utf-8"
+              },
+              {
+                "key": "SOAPAction",
+                "value": "{{ns}}/HistoricoOcorrenciaVelocidade"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}",
+              "host": [
+                "{{base_url}}"
+              ]
+            },
+            "description": "Alertas de velocidade COM dados de endereco.",
+            "body": {
+              "mode": "raw",
+              "raw": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<soap:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">\n  <soap:Body>\n    <HistoricoOcorrenciaVelocidade xmlns=\"{{ns}}\">\n      <Usuario>{{usuario}}</Usuario>\n      <Senha>{{senha}}</Senha>\n      <idEquipamento>{{id_equip_teste}}</idEquipamento>\n      <DataInicio>{{data_inicio}}</DataInicio>\n      <DataFim>{{data_fim}}</DataFim>\n      <blnLogradouro>True</blnLogradouro>\n    </HistoricoOcorrenciaVelocidade>\n  </soap:Body>\n</soap:Envelope>",
+              "options": {
+                "raw": {
+                  "language": "xml"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "4.2 - HistoricoOcorrenciaVelocidade (logradouro False)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// --- Captura de contrato: preenche a tabela 0.4-A do guia ---",
+                  "const xml = pm.collectionVariables.get(\"xml\") || \"\";",
+                  "const registro = \"tbOcorrenciaAlerta\";",
+                  "",
+                  "const blocos = xml.match(new RegExp(\"<\" + registro + \">[\\\\s\\\\S]*?</\" + registro + \">\", \"gi\")) || [];",
+                  "pm.test(\"Retornou registros <\" + registro + \">\", () => pm.expect(blocos.length).to.be.above(0));",
+                  "",
+                  "// Uniao das tags de uma amostra (registros podem omitir campos vazios)",
+                  "const tags = new Set();",
+                  "blocos.slice(0, 25).forEach(b =>",
+                  "    (b.match(/<([A-Za-z_][\\w.-]*)\\s*\\/?>/g) || [])",
+                  "        .forEach(t => tags.add(t.replace(/[<>\\/\\s]/g, \"\"))));",
+                  "tags.delete(registro);",
+                  "",
+                  "console.log(\"============================================================\");",
+                  "console.log(\"METODO   :\", pm.info.requestName);",
+                  "console.log(\"REGISTRO :\", registro);",
+                  "console.log(\"QTDE     :\", blocos.length);",
+                  "console.log(\"TEMPO    :\", pm.response.responseTime, \"ms   TAMANHO:\",",
+                  "            (pm.response.responseSize / 1024).toFixed(1), \"KB\");",
+                  "console.log(\"CAMPOS   :\", [...tags].join(\", \") || \"(nenhum)\");",
+                  "console.log(\"AMOSTRA  :\\n\" + (blocos[0] || \"(sem registros)\"));",
+                  "console.log(\"============================================================\");",
+                  "",
+                  "",
+                  "const comLog = Number(pm.collectionVariables.get(\"_tam_com_log\") || 0);",
+                  "console.log(\">>> COM logradouro :\", (comLog/1024).toFixed(1), \"KB\");",
+                  "console.log(\">>> SEM logradouro :\", (pm.response.responseSize/1024).toFixed(1), \"KB\");",
+                  "console.log(\">>> O endereco vale o payload extra? O relatorio usa 'local' nas ocorrencias.\");"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/xml; charset=utf-8"
+              },
+              {
+                "key": "SOAPAction",
+                "value": "{{ns}}/HistoricoOcorrenciaVelocidade"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}",
+              "host": [
+                "{{base_url}}"
+              ]
+            },
+            "description": "Mede quanto payload o endereco adiciona.",
+            "body": {
+              "mode": "raw",
+              "raw": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<soap:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">\n  <soap:Body>\n    <HistoricoOcorrenciaVelocidade xmlns=\"{{ns}}\">\n      <Usuario>{{usuario}}</Usuario>\n      <Senha>{{senha}}</Senha>\n      <idEquipamento>{{id_equip_teste}}</idEquipamento>\n      <DataInicio>{{data_inicio}}</DataInicio>\n      <DataFim>{{data_fim}}</DataFim>\n      <blnLogradouro>False</blnLogradouro>\n    </HistoricoOcorrenciaVelocidade>\n  </soap:Body>\n</soap:Envelope>",
+              "options": {
+                "raw": {
+                  "language": "xml"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "4.3 - HistoricoOcorrenciaSensor",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// --- Captura de contrato: preenche a tabela 0.4-A do guia ---",
+                  "const xml = pm.collectionVariables.get(\"xml\") || \"\";",
+                  "const registro = \"tbOcorrenciaAlerta\";",
+                  "",
+                  "const blocos = xml.match(new RegExp(\"<\" + registro + \">[\\\\s\\\\S]*?</\" + registro + \">\", \"gi\")) || [];",
+                  "pm.test(\"Retornou registros <\" + registro + \">\", () => pm.expect(blocos.length).to.be.above(0));",
+                  "",
+                  "// Uniao das tags de uma amostra (registros podem omitir campos vazios)",
+                  "const tags = new Set();",
+                  "blocos.slice(0, 25).forEach(b =>",
+                  "    (b.match(/<([A-Za-z_][\\w.-]*)\\s*\\/?>/g) || [])",
+                  "        .forEach(t => tags.add(t.replace(/[<>\\/\\s]/g, \"\"))));",
+                  "tags.delete(registro);",
+                  "",
+                  "console.log(\"============================================================\");",
+                  "console.log(\"METODO   :\", pm.info.requestName);",
+                  "console.log(\"REGISTRO :\", registro);",
+                  "console.log(\"QTDE     :\", blocos.length);",
+                  "console.log(\"TEMPO    :\", pm.response.responseTime, \"ms   TAMANHO:\",",
+                  "            (pm.response.responseSize / 1024).toFixed(1), \"KB\");",
+                  "console.log(\"CAMPOS   :\", [...tags].join(\", \") || \"(nenhum)\");",
+                  "console.log(\"AMOSTRA  :\\n\" + (blocos[0] || \"(sem registros)\"));",
+                  "console.log(\"============================================================\");",
+                  "",
+                  "",
+                  "const estados = [...new Set([...xml.matchAll(/<Sensor>([^<]+)</gi)].map(m => m[1]))];",
+                  "console.log(\">>> SENSORES COM OCORRENCIA:\", estados.join(\" | \"));",
+                  "console.log(\">>> Alimenta a taxonomia canonica (SENSOR_PANICO, SENSOR_IGNICAO...).\");"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/xml; charset=utf-8"
+              },
+              {
+                "key": "SOAPAction",
+                "value": "{{ns}}/HistoricoOcorrenciaSensor"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}",
+              "host": [
+                "{{base_url}}"
+              ]
+            },
+            "description": "idSensor=0 traz todos os sensores.",
+            "body": {
+              "mode": "raw",
+              "raw": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<soap:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">\n  <soap:Body>\n    <HistoricoOcorrenciaSensor xmlns=\"{{ns}}\">\n      <Usuario>{{usuario}}</Usuario>\n      <Senha>{{senha}}</Senha>\n      <idEquipamento>{{id_equip_teste}}</idEquipamento>\n      <DataInicio>{{data_inicio}}</DataInicio>\n      <DataFim>{{data_fim}}</DataFim>\n      <idSensor>0</idSensor>\n      <blnLogradouro>True</blnLogradouro>\n    </HistoricoOcorrenciaSensor>\n  </soap:Body>\n</soap:Envelope>",
+              "options": {
+                "raw": {
+                  "language": "xml"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "4.4 - HistoricoOcorrenciaAlvo",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// --- Captura de contrato: preenche a tabela 0.4-A do guia ---",
+                  "const xml = pm.collectionVariables.get(\"xml\") || \"\";",
+                  "const registro = \"tbOcorrenciaAlerta\";",
+                  "",
+                  "const blocos = xml.match(new RegExp(\"<\" + registro + \">[\\\\s\\\\S]*?</\" + registro + \">\", \"gi\")) || [];",
+                  "pm.test(\"Retornou registros <\" + registro + \">\", () => pm.expect(blocos.length).to.be.above(0));",
+                  "",
+                  "// Uniao das tags de uma amostra (registros podem omitir campos vazios)",
+                  "const tags = new Set();",
+                  "blocos.slice(0, 25).forEach(b =>",
+                  "    (b.match(/<([A-Za-z_][\\w.-]*)\\s*\\/?>/g) || [])",
+                  "        .forEach(t => tags.add(t.replace(/[<>\\/\\s]/g, \"\"))));",
+                  "tags.delete(registro);",
+                  "",
+                  "console.log(\"============================================================\");",
+                  "console.log(\"METODO   :\", pm.info.requestName);",
+                  "console.log(\"REGISTRO :\", registro);",
+                  "console.log(\"QTDE     :\", blocos.length);",
+                  "console.log(\"TEMPO    :\", pm.response.responseTime, \"ms   TAMANHO:\",",
+                  "            (pm.response.responseSize / 1024).toFixed(1), \"KB\");",
+                  "console.log(\"CAMPOS   :\", [...tags].join(\", \") || \"(nenhum)\");",
+                  "console.log(\"AMOSTRA  :\\n\" + (blocos[0] || \"(sem registros)\"));",
+                  "console.log(\"============================================================\");",
+                  "",
+                  "",
+                  "const viol = [...new Set([...xml.matchAll(/<Violacao>([^<]+)</gi)].map(m => m[1]))];",
+                  "console.log(\">>> VIOLACOES:\", viol.join(\" | \"), \"-> CERCA_ENTRADA / CERCA_SAIDA\");"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/xml; charset=utf-8"
+              },
+              {
+                "key": "SOAPAction",
+                "value": "{{ns}}/HistoricoOcorrenciaAlvo"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}",
+              "host": [
+                "{{base_url}}"
+              ]
+            },
+            "description": "Violacoes de cerca (ENTRADA/SAIDA). Alimenta a taxonomia canonica.",
+            "body": {
+              "mode": "raw",
+              "raw": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<soap:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">\n  <soap:Body>\n    <HistoricoOcorrenciaAlvo xmlns=\"{{ns}}\">\n      <Usuario>{{usuario}}</Usuario>\n      <Senha>{{senha}}</Senha>\n      <idEquipamento>{{id_equip_teste}}</idEquipamento>\n      <DataInicio>{{data_inicio}}</DataInicio>\n      <DataFim>{{data_fim}}</DataFim>\n      <blnLogradouro>True</blnLogradouro>\n    </HistoricoOcorrenciaAlvo>\n  </soap:Body>\n</soap:Envelope>",
+              "options": {
+                "raw": {
+                  "language": "xml"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "4.5 - ListaCercaRota",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// --- Captura de contrato: preenche a tabela 0.4-A do guia ---",
+                  "const xml = pm.collectionVariables.get(\"xml\") || \"\";",
+                  "const registro = \"tbCercaRota\";",
+                  "",
+                  "const blocos = xml.match(new RegExp(\"<\" + registro + \">[\\\\s\\\\S]*?</\" + registro + \">\", \"gi\")) || [];",
+                  "pm.test(\"Retornou registros <\" + registro + \">\", () => pm.expect(blocos.length).to.be.above(0));",
+                  "",
+                  "// Uniao das tags de uma amostra (registros podem omitir campos vazios)",
+                  "const tags = new Set();",
+                  "blocos.slice(0, 25).forEach(b =>",
+                  "    (b.match(/<([A-Za-z_][\\w.-]*)\\s*\\/?>/g) || [])",
+                  "        .forEach(t => tags.add(t.replace(/[<>\\/\\s]/g, \"\"))));",
+                  "tags.delete(registro);",
+                  "",
+                  "console.log(\"============================================================\");",
+                  "console.log(\"METODO   :\", pm.info.requestName);",
+                  "console.log(\"REGISTRO :\", registro);",
+                  "console.log(\"QTDE     :\", blocos.length);",
+                  "console.log(\"TEMPO    :\", pm.response.responseTime, \"ms   TAMANHO:\",",
+                  "            (pm.response.responseSize / 1024).toFixed(1), \"KB\");",
+                  "console.log(\"CAMPOS   :\", [...tags].join(\", \") || \"(nenhum)\");",
+                  "console.log(\"AMOSTRA  :\\n\" + (blocos[0] || \"(sem registros)\"));",
+                  "console.log(\"============================================================\");",
+                  ""
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/xml; charset=utf-8"
+              },
+              {
+                "key": "SOAPAction",
+                "value": "{{ns}}/ListaCercaRota"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}",
+              "host": [
+                "{{base_url}}"
+              ]
+            },
+            "description": "Cadastro das rotas (Descricao, Origem, Destino, Qtde).",
+            "body": {
+              "mode": "raw",
+              "raw": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<soap:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">\n  <soap:Body>\n    <ListaCercaRota xmlns=\"{{ns}}\">\n      <Usuario>{{usuario}}</Usuario>\n      <Senha>{{senha}}</Senha>\n    </ListaCercaRota>\n  </soap:Body>\n</soap:Envelope>",
+              "options": {
+                "raw": {
+                  "language": "xml"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 - Utilizacao & Saude",
+      "description": "NENHUM destes esta no manual v2.8 - contratos totalmente desconhecidos.\nCapture tudo que vier.",
+      "item": [
+        {
+          "name": "5.1 - RetornaUtilizacaoVeiculo",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const xml = pm.collectionVariables.get(\"xml\") || \"\";",
+                  "console.log(\"============================================================\");",
+                  "console.log(\"METODO NAO DOCUMENTADO:\", pm.info.requestName);",
+                  "console.log(\"XML COMPLETO (registro desconhecido - inspecione manualmente):\");",
+                  "console.log(xml.slice(0, 4000));",
+                  "console.log(\"============================================================\");",
+                  "const tabelas = [...new Set((xml.match(/<(tb\\w+)>/g) || []).map(t => t.replace(/[<>]/g, \"\")))];",
+                  "console.log(\">>> TABELAS ENCONTRADAS:\", tabelas.join(\", \") || \"(nenhuma)\");"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/xml; charset=utf-8"
+              },
+              {
+                "key": "SOAPAction",
+                "value": "{{ns}}/RetornaUtilizacaoVeiculo"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}",
+              "host": [
+                "{{base_url}}"
+              ]
+            },
+            "description": "Candidato a silver.fato_utilizacao. Contrato desconhecido.",
+            "body": {
+              "mode": "raw",
+              "raw": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<soap:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">\n  <soap:Body>\n    <RetornaUtilizacaoVeiculo xmlns=\"{{ns}}\">\n      <Usuario>{{usuario}}</Usuario>\n      <Senha>{{senha}}</Senha>\n      <idEquipamento>{{id_equip_teste}}</idEquipamento>\n      <DataInicio>{{data_inicio}}</DataInicio>\n      <DataFim>{{data_fim}}</DataFim>\n    </RetornaUtilizacaoVeiculo>\n  </soap:Body>\n</soap:Envelope>",
+              "options": {
+                "raw": {
+                  "language": "xml"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "5.2 - RetornaStatusComunicacao",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const xml = pm.collectionVariables.get(\"xml\") || \"\";",
+                  "console.log(\"============================================================\");",
+                  "console.log(\"METODO NAO DOCUMENTADO:\", pm.info.requestName);",
+                  "console.log(\"TipoStatus e xsd:string sem enum no WSDL.\");",
+                  "console.log(\"Se der erro, a mensagem deve revelar os valores aceitos.\");",
+                  "console.log(\"TESTE TAMBEM: TipoStatus = 0, 1, TODOS\");",
+                  "console.log(xml.slice(0, 4000));",
+                  "console.log(\"============================================================\");"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/xml; charset=utf-8"
+              },
+              {
+                "key": "SOAPAction",
+                "value": "{{ns}}/RetornaStatusComunicacao"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}",
+              "host": [
+                "{{base_url}}"
+              ]
+            },
+            "description": "Base do gold_v_frota_sem_sinal. QtdeRegistro e xsd:int. TipoStatus nao tem enum no WSDL - teste vazio, 0, 1, TODOS.",
+            "body": {
+              "mode": "raw",
+              "raw": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<soap:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">\n  <soap:Body>\n    <RetornaStatusComunicacao xmlns=\"{{ns}}\">\n      <Usuario>{{usuario}}</Usuario>\n      <Senha>{{senha}}</Senha>\n      <idEquipamento>{{id_equip_teste}}</idEquipamento>\n      <TipoStatus></TipoStatus>\n      <QtdeRegistro>10</QtdeRegistro>\n    </RetornaStatusComunicacao>\n  </soap:Body>\n</soap:Envelope>",
+              "options": {
+                "raw": {
+                  "language": "xml"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "5.3 - RetornaDistanciaVeiculos",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const xml = pm.collectionVariables.get(\"xml\") || \"\";",
+                  "console.log(\"============================================================\");",
+                  "console.log(\"METODO NAO DOCUMENTADO (plural - sem idEquipamento!):\");",
+                  "console.log(xml.slice(0, 4000));",
+                  "const temPlaca = /<Placa>/i.test(xml), temEquip = /<idEquipamento>/i.test(xml);",
+                  "console.log(\">>> Tem <Placa>?\", temPlaca, \"| Tem <idEquipamento>?\", temEquip);",
+                  "console.log(\">>> Se sim, substitui N chamadas do RetornaDistanciaVeiculo singular.\");",
+                  "console.log(\"============================================================\");"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/xml; charset=utf-8"
+              },
+              {
+                "key": "SOAPAction",
+                "value": "{{ns}}/RetornaDistanciaVeiculos"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}",
+              "host": [
+                "{{base_url}}"
+              ]
+            },
+            "description": "Sem idEquipamento: pode trazer a frota toda numa chamada. Confirme se traz Placa/idEquipamento para dar join.",
+            "body": {
+              "mode": "raw",
+              "raw": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<soap:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">\n  <soap:Body>\n    <RetornaDistanciaVeiculos xmlns=\"{{ns}}\">\n      <Usuario>{{usuario}}</Usuario>\n      <Senha>{{senha}}</Senha>\n      <DataInicio>{{data_inicio}}</DataInicio>\n      <DataFim>{{data_fim}}</DataFim>\n    </RetornaDistanciaVeiculos>\n  </soap:Body>\n</soap:Envelope>",
+              "options": {
+                "raw": {
+                  "language": "xml"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 - Limites & Erros",
+      "description": "Define a politica de retry/backoff do n8n - que hoje NAO EXISTE no backfill.\n\nPara o teste de rate limit: abra o Collection Runner, selecione APENAS a\nrequest 6.1, marque 'Iterations = 12' e 'Delay = 0ms'.",
+      "item": [
+        {
+          "name": "6.1 - Burst rate limit (rodar 12x, delay 0)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Rodar via Collection Runner: Iterations=12, Delay=0ms",
+                  "const body = pm.response.text();",
+                  "const n = Number(pm.collectionVariables.get(\"_burst\") || 0) + 1;",
+                  "pm.collectionVariables.set(\"_burst\", n);",
+                  "",
+                  "const limite = /excesso|limite|minuto/i.test(body);",
+                  "console.log(\"Chamada #\" + n + \" -> \" + (limite ? \"*** BLOQUEADO ***\" : \"ok\") +",
+                  "            \"  (\" + pm.response.responseTime + \" ms)\");",
+                  "if (limite) {",
+                  "    console.log(\">>> MENSAGEM LITERAL DO RATE LIMIT:\",",
+                  "                (body.match(/Erro:\\s*[^<]+/i) || [\"\"])[0].trim());",
+                  "    console.log(\">>> TRAVOU NA CHAMADA #\" + n);",
+                  "    console.log(\">>> HTTP status:\", pm.response.code);",
+                  "    pm.collectionVariables.set(\"_burst\", 0);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/xml; charset=utf-8"
+              },
+              {
+                "key": "SOAPAction",
+                "value": "{{ns}}/ValidaLogin"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}",
+              "host": [
+                "{{base_url}}"
+              ]
+            },
+            "description": "O manual documenta 10 chamadas/minuto. Capture: em qual chamada trava, a mensagem literal, o HTTP status e quanto tempo ate liberar.",
+            "body": {
+              "mode": "raw",
+              "raw": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<soap:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">\n  <soap:Body>\n    <ValidaLogin xmlns=\"{{ns}}\">\n      <Usuario>{{usuario}}</Usuario>\n      <Senha>{{senha}}</Senha>\n    </ValidaLogin>\n  </soap:Body>\n</soap:Envelope>",
+              "options": {
+                "raw": {
+                  "language": "xml"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "6.2 - idEquipamento inexistente (negativo)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.text();",
+                  "const temErro = /Erro:/i.test(body);",
+                  "console.log(\">>> Retorna erro ou lista vazia?\", temErro ? \"ERRO\" : \"LISTA VAZIA\");",
+                  "console.log(\">>> Isso muda o tratamento no Code node do n8n.\");",
+                  "console.log(body.slice(0, 800));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/xml; charset=utf-8"
+              },
+              {
+                "key": "SOAPAction",
+                "value": "{{ns}}/HistoricoPosicao"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}",
+              "host": [
+                "{{base_url}}"
+              ]
+            },
+            "description": "Erro ou lista vazia? Muda o tratamento de excecao no n8n.",
+            "body": {
+              "mode": "raw",
+              "raw": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<soap:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">\n  <soap:Body>\n    <HistoricoPosicao xmlns=\"{{ns}}\">\n      <Usuario>{{usuario}}</Usuario>\n      <Senha>{{senha}}</Senha>\n      <idEquipamento>00000000000000</idEquipamento>\n      <DataInicio>{{data_inicio}}</DataInicio>\n      <DataFim>{{data_fim}}</DataFim>\n    </HistoricoPosicao>\n  </soap:Body>\n</soap:Envelope>",
+              "options": {
+                "raw": {
+                  "language": "xml"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "6.3 - Data invertida (negativo)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "console.log(\">>> DataInicio > DataFim:\", pm.response.text().slice(0, 800));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/xml; charset=utf-8"
+              },
+              {
+                "key": "SOAPAction",
+                "value": "{{ns}}/HistoricoPosicao"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}",
+              "host": [
+                "{{base_url}}"
+              ]
+            },
+            "description": "DataInicio > DataFim. Valida ou aceita silenciosamente?",
+            "body": {
+              "mode": "raw",
+              "raw": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<soap:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">\n  <soap:Body>\n    <HistoricoPosicao xmlns=\"{{ns}}\">\n      <Usuario>{{usuario}}</Usuario>\n      <Senha>{{senha}}</Senha>\n      <idEquipamento>{{id_equip_teste}}</idEquipamento>\n      <DataInicio>31/07/2026</DataInicio>\n      <DataFim>01/07/2026</DataFim>\n    </HistoricoPosicao>\n  </soap:Body>\n</soap:Envelope>",
+              "options": {
+                "raw": {
+                  "language": "xml"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "6.4 - Formato de data com hora",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// --- Captura de contrato: preenche a tabela 0.4-A do guia ---",
+                  "const xml = pm.collectionVariables.get(\"xml\") || \"\";",
+                  "const registro = \"tbPosicao\";",
+                  "",
+                  "const blocos = xml.match(new RegExp(\"<\" + registro + \">[\\\\s\\\\S]*?</\" + registro + \">\", \"gi\")) || [];",
+                  "pm.test(\"Retornou registros <\" + registro + \">\", () => pm.expect(blocos.length).to.be.above(0));",
+                  "",
+                  "// Uniao das tags de uma amostra (registros podem omitir campos vazios)",
+                  "const tags = new Set();",
+                  "blocos.slice(0, 25).forEach(b =>",
+                  "    (b.match(/<([A-Za-z_][\\w.-]*)\\s*\\/?>/g) || [])",
+                  "        .forEach(t => tags.add(t.replace(/[<>\\/\\s]/g, \"\"))));",
+                  "tags.delete(registro);",
+                  "",
+                  "console.log(\"============================================================\");",
+                  "console.log(\"METODO   :\", pm.info.requestName);",
+                  "console.log(\"REGISTRO :\", registro);",
+                  "console.log(\"QTDE     :\", blocos.length);",
+                  "console.log(\"TEMPO    :\", pm.response.responseTime, \"ms   TAMANHO:\",",
+                  "            (pm.response.responseSize / 1024).toFixed(1), \"KB\");",
+                  "console.log(\"CAMPOS   :\", [...tags].join(\", \") || \"(nenhum)\");",
+                  "console.log(\"AMOSTRA  :\\n\" + (blocos[0] || \"(sem registros)\"));",
+                  "console.log(\"============================================================\");",
+                  "",
+                  "",
+                  "console.log(\">>> O manual usa dd/MM/yyyy; o backfill ATUAL manda dd/MM/yyyy HH:mm:ss.\");",
+                  "console.log(\">>> Se este passar e retornar dados, o formato com hora e aceito.\");"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/xml; charset=utf-8"
+              },
+              {
+                "key": "SOAPAction",
+                "value": "{{ns}}/HistoricoPosicao"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}",
+              "host": [
+                "{{base_url}}"
+              ]
+            },
+            "description": "O manual usa dd/MM/yyyy; o backfill atual manda dd/MM/yyyy HH:mm:ss. Qual vale?",
+            "body": {
+              "mode": "raw",
+              "raw": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<soap:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">\n  <soap:Body>\n    <HistoricoPosicao xmlns=\"{{ns}}\">\n      <Usuario>{{usuario}}</Usuario>\n      <Senha>{{senha}}</Senha>\n      <idEquipamento>{{id_equip_teste}}</idEquipamento>\n      <DataInicio>01/07/2026 00:00:00</DataInicio>\n      <DataFim>31/07/2026 23:59:59</DataFim>\n    </HistoricoPosicao>\n  </soap:Body>\n</soap:Envelope>",
+              "options": {
+                "raw": {
+                  "language": "xml"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "event": [
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// ===================================================================",
+          "// Guard compartilhado - roda em TODA request da collection.",
+          "// A 3S devolve HTTP 200 mesmo em erro: <string ...>Erro: [msg]</string>",
+          "// ===================================================================",
+          "const body = pm.response.text();",
+          "",
+          "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+          "",
+          "const ehNegativo = pm.info.requestName.toLowerCase().includes(\"negativo\");",
+          "const matchErro  = body.match(/Erro:\\s*[^<]+/i);",
+          "",
+          "if (ehNegativo) {",
+          "    pm.test(\"Retornou 'Erro:' como esperado\",",
+          "        () => pm.expect(matchErro, \"esperava um Erro: no corpo\").to.not.be.null);",
+          "    if (matchErro) console.log(\">>> [NEGATIVO] mensagem literal:\", matchErro[0].trim());",
+          "} else {",
+          "    pm.test(\"Resposta sem 'Erro:'\", () => {",
+          "        if (matchErro) pm.expect.fail(matchErro[0].trim());",
+          "    });",
+          "}",
+          "",
+          "// O payload vem ESCAPADO dentro de <string> (toda resposta e xsd:string no WSDL).",
+          "// Desescapar aqui para os testes de cada request usarem {{xml}}.",
+          "pm.collectionVariables.set(\"xml\",",
+          "    body.replace(/&lt;/g, \"<\").replace(/&gt;/g, \">\").replace(/&amp;/g, \"&\"));",
+          ""
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "xml",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "_burst",
+      "value": "0",
+      "type": "string"
+    },
+    {
+      "key": "_tam_com_log",
+      "value": "0",
+      "type": "string"
+    }
+  ]
+}

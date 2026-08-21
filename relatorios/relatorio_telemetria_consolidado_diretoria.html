@@ -1,0 +1,569 @@
+
+    <!DOCTYPE html>
+    <html lang="pt-BR">
+    <head>
+        <meta charset="UTF-8">
+        <title>Painel Consolidado de Telemetria — Diretoria</title>
+        <style>
+@page {
+    size: A4 portrait;
+    margin: 8mm 10mm 8mm 10mm;
+    @bottom-right {
+        content: "Página " counter(page) " de " counter(pages);
+        font-family: Arial, sans-serif;
+        font-size: 6.5pt;
+        color: #6B7280;
+    }
+    @bottom-left {
+        content: "Transportes Gritsch | Torre de Controle — Relatório Oficial de Telemetria";
+        font-family: Arial, sans-serif;
+        font-size: 6.5pt;
+        color: #6B7280;
+    }
+}
+
+body {
+    font-family: Arial, Helvetica, sans-serif;
+    color: #1F2937;
+    margin: 0;
+    padding: 0;
+    font-size: 7pt;
+    line-height: 1.2;
+    background: #FFFFFF;
+}
+
+/* CABEÇALHO */
+.header-table {
+    width: 100%;
+    border-collapse: collapse;
+    border-bottom: 2px solid #1E3A5F;
+    padding-bottom: 4px;
+    margin-bottom: 6px;
+}
+.header-table td {
+    vertical-align: middle;
+}
+.logo-img {
+    width: 95px;
+    max-width: 95px;
+    height: auto;
+    max-height: 26px;
+    display: block;
+}
+.header-title {
+    text-align: right;
+}
+.header-title h1 {
+    font-size: 10.5pt;
+    font-weight: bold;
+    color: #1E3A5F;
+    margin: 0;
+}
+.header-title p {
+    font-size: 6.5pt;
+    color: #4B5563;
+    margin: 1px 0 0 0;
+}
+
+/* TÍTULOS DE SEÇÃO */
+.section-header {
+    font-size: 7.2pt;
+    font-weight: bold;
+    color: #1E3A5F;
+    text-transform: uppercase;
+    letter-spacing: 0.2px;
+    border-bottom: 1px solid #1E3A5F;
+    padding-bottom: 1.5px;
+    margin: 6px 0 3px 0;
+}
+
+/* TABELAS 100% LARGURA SEQUENCIAIS */
+.tbl-clean {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 5px;
+    font-size: 6.6pt;
+    border: 1px solid #D1D5DB;
+}
+.tbl-clean th {
+    background-color: #F3F4F6;
+    color: #111827;
+    font-weight: bold;
+    font-size: 6.2pt;
+    text-transform: uppercase;
+    padding: 2.5px 4.5px;
+    border: 1px solid #D1D5DB;
+    border-bottom: 1.2px solid #9CA3AF;
+    text-align: left;
+}
+.tbl-clean th.center, .tbl-clean td.center { text-align: center; }
+.tbl-clean th.right, .tbl-clean td.right { text-align: right; }
+.tbl-clean td {
+    padding: 2px 4.5px;
+    border: 1px solid #E5E7EB;
+    color: #374151;
+}
+.tbl-clean tr:nth-child(even) td {
+    background-color: #F9FAFB;
+}
+
+/* TEXTOS E DESTAQUES */
+.text-bold { font-weight: bold; }
+.text-danger { color: #991B1B; font-weight: bold; }
+.text-primary { color: #1E3A5F; font-weight: bold; }
+.text-muted { color: #6B7280; font-size: 6.2pt; }
+
+/* BOX INFORMATIVO SIMPLES */
+.box-info {
+    border: 1px solid #D1D5DB;
+    background-color: #F9FAFB;
+    padding: 3.5px 5px;
+    font-size: 6.2pt;
+    color: #374151;
+    margin-top: 4px;
+    border-left: 2.5px solid #1E3A5F;
+    line-height: 1.15;
+}
+
+.page-break {
+    page-break-before: always;
+}
+</style>
+    </head>
+    <body>
+        <!-- =================== PÁGINA 1 =================== -->
+        <!-- CABEÇALHO -->
+        <table class="header-table">
+            <tr>
+                <td style="width:110px;">
+                    <img src="file:///home/gabriel/Projetos/data-platform-dev/relatorios/logo_gritsch.png" class="logo-img" alt="Gritsch" />
+                </td>
+                <td class="header-title">
+                    <h1>PAINEL CONSOLIDADO DE TELEMETRIA & VELOCIDADE</h1>
+                    <p>Visão Executiva Diretoria | Período: <strong>05/08/2026 a 19/08/2026</strong> | Emissão: <strong>19/08/2026 16:07</strong></p>
+                    <p>Torre de Controle | Destinatário: <strong>Diretoria Nacional</strong></p>
+                </td>
+            </tr>
+        </table>
+
+        <!-- 1. RESUMO EXECUTIVO (TABELA SEQUENCIAL 100%) -->
+        <div class="section-header">1. Resumo Executivo Nacional</div>
+        <table class="tbl-clean">
+            <thead>
+                <tr>
+                    <th class="center" style="width:25%;">Total de Infrações</th>
+                    <th class="center" style="width:25%;">Filiais com Ocorrência</th>
+                    <th class="center" style="width:25%;">Veículos Ofensores</th>
+                    <th class="center" style="width:25%;">Pico de Velocidade Real</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td class="center text-bold text-danger" style="font-size:8pt;">881 ocorrências</td>
+                    <td class="center text-bold" style="font-size:8pt;">37 de 34 filiais</td>
+                    <td class="center text-bold" style="font-size:8pt;">203 veículos</td>
+                    <td class="center text-bold text-danger" style="font-size:8pt;">159 km/h (Média: 113.4 km/h)</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <!-- 2. RANKING DE FILIAIS (TABELA SEQUENCIAL 100%) -->
+        <div class="section-header">2. Ranking por Filial Operacional (Principais Unidades)</div>
+        <table class="tbl-clean">
+            <thead>
+                <tr>
+                    <th style="width:30%;">Filial Operacional</th>
+                    <th style="width:26%;">Gestor Regional (CC)</th>
+                    <th class="center" style="width:14%;">Infrações (%)</th>
+                    <th class="center" style="width:10%;">Veículos</th>
+                    <th class="right" style="width:10%;">Pico</th>
+                    <th class="right" style="width:10%;">Média</th>
+                </tr>
+            </thead>
+            <tbody>
+                
+        <tr>
+            <td class="text-bold text-primary">GRITSCH - CWB (BASE)</td>
+            <td class="text-muted">adilson@gritsch.com.br</td>
+            <td class="center text-bold text-danger">107 <span class="text-muted">(12.1%)</span></td>
+            <td class="center">23</td>
+            <td class="right text-danger">132 km/h</td>
+            <td class="right text-muted">99.3 km/h</td>
+        </tr>
+        
+        <tr>
+            <td class="text-bold text-primary">GRITSCH - GOI</td>
+            <td class="text-muted">ely@gritsch.com.br</td>
+            <td class="center text-bold text-danger">107 <span class="text-muted">(12.1%)</span></td>
+            <td class="center">7</td>
+            <td class="right text-danger">135 km/h</td>
+            <td class="right text-muted">120.7 km/h</td>
+        </tr>
+        
+        <tr>
+            <td class="text-bold text-primary">GRITSCH - CGR</td>
+            <td class="text-muted">ely@gritsch.com.br</td>
+            <td class="center text-bold text-danger">80 <span class="text-muted">(9.1%)</span></td>
+            <td class="center">6</td>
+            <td class="right text-danger">159 km/h</td>
+            <td class="right text-muted">126.0 km/h</td>
+        </tr>
+        
+        <tr>
+            <td class="text-bold text-primary">GRITSCH - POA</td>
+            <td class="text-muted">helder.santos@gritsch.com.br</td>
+            <td class="center text-bold text-danger">66 <span class="text-muted">(7.5%)</span></td>
+            <td class="center">14</td>
+            <td class="right text-danger">148 km/h</td>
+            <td class="right text-muted">112.7 km/h</td>
+        </tr>
+        
+        <tr>
+            <td class="text-bold text-primary">GRITSCH - RDN</td>
+            <td class="text-muted">ely@gritsch.com.br</td>
+            <td class="center text-bold text-danger">55 <span class="text-muted">(6.2%)</span></td>
+            <td class="center">4</td>
+            <td class="right text-danger">138 km/h</td>
+            <td class="right text-muted">122.5 km/h</td>
+        </tr>
+        
+        <tr>
+            <td class="text-bold text-primary">REFERÊNCIA SINOP</td>
+            <td class="text-muted">Diretoria</td>
+            <td class="center text-bold text-danger">53 <span class="text-muted">(6.0%)</span></td>
+            <td class="center">12</td>
+            <td class="right text-danger">139 km/h</td>
+            <td class="right text-muted">116.1 km/h</td>
+        </tr>
+        
+        <tr>
+            <td class="text-bold text-primary">GRITSCH - LDB</td>
+            <td class="text-muted">clovis@gritsch.com.br</td>
+            <td class="center text-bold text-danger">47 <span class="text-muted">(5.3%)</span></td>
+            <td class="center">7</td>
+            <td class="right text-danger">118 km/h</td>
+            <td class="right text-muted">99.1 km/h</td>
+        </tr>
+        
+        <tr>
+            <td class="text-bold text-primary">GRITSCH - SNO</td>
+            <td class="text-muted">ely@gritsch.com.br</td>
+            <td class="center text-bold text-danger">45 <span class="text-muted">(5.1%)</span></td>
+            <td class="center">10</td>
+            <td class="right text-danger">132 km/h</td>
+            <td class="right text-muted">120.0 km/h</td>
+        </tr>
+        
+        <tr>
+            <td class="text-bold text-primary">REFERÊNCIA CUIABÁ LOJA</td>
+            <td class="text-muted">Diretoria</td>
+            <td class="center text-bold text-danger">33 <span class="text-muted">(3.7%)</span></td>
+            <td class="center">12</td>
+            <td class="right text-danger">144 km/h</td>
+            <td class="right text-muted">113.8 km/h</td>
+        </tr>
+        
+        <tr>
+            <td class="text-bold text-primary">REFERÊNCIA GOIÂNIA LOJA</td>
+            <td class="text-muted">Diretoria</td>
+            <td class="center text-bold text-danger">32 <span class="text-muted">(3.6%)</span></td>
+            <td class="center">16</td>
+            <td class="right text-danger">137 km/h</td>
+            <td class="right text-muted">120.1 km/h</td>
+        </tr>
+        
+        <tr>
+            <td class="text-bold text-primary">GRITSCH - FLN</td>
+            <td class="text-muted">helder.santos@gritsch.com.br</td>
+            <td class="center text-bold text-danger">32 <span class="text-muted">(3.6%)</span></td>
+            <td class="center">5</td>
+            <td class="right text-danger">124 km/h</td>
+            <td class="right text-muted">96.1 km/h</td>
+        </tr>
+        
+        <tr>
+            <td class="text-bold text-primary">GRITSCH - CRI</td>
+            <td class="text-muted">helder.santos@gritsch.com.br</td>
+            <td class="center text-bold text-danger">26 <span class="text-muted">(3.0%)</span></td>
+            <td class="center">1</td>
+            <td class="right text-danger">99 km/h</td>
+            <td class="right text-muted">94.5 km/h</td>
+        </tr>
+        
+        <tr>
+            <td class="text-bold text-primary">GRITSCH - PMW</td>
+            <td class="text-muted">ely@gritsch.com.br</td>
+            <td class="center text-bold text-danger">25 <span class="text-muted">(2.8%)</span></td>
+            <td class="center">4</td>
+            <td class="right text-danger">132 km/h</td>
+            <td class="right text-muted">117.3 km/h</td>
+        </tr>
+        
+        <tr>
+            <td class="text-bold text-primary">GRITSCH - PGR</td>
+            <td class="text-muted">clovis@gritsch.com.br</td>
+            <td class="center text-bold text-danger">22 <span class="text-muted">(2.5%)</span></td>
+            <td class="center">2</td>
+            <td class="right text-danger">112 km/h</td>
+            <td class="right text-muted">95.3 km/h</td>
+        </tr>
+        
+        <tr>
+            <td class="text-bold text-primary">GRITSCH - CGB</td>
+            <td class="text-muted">ely@gritsch.com.br</td>
+            <td class="center text-bold text-danger">20 <span class="text-muted">(2.3%)</span></td>
+            <td class="center">5</td>
+            <td class="right text-danger">116 km/h</td>
+            <td class="right text-muted">113.3 km/h</td>
+        </tr>
+        
+            </tbody>
+        </table>
+
+        <!-- =================== PÁGINA 2 =================== -->
+        <div class="page-break"></div>
+
+        <table class="header-table">
+            <tr>
+                <td style="width:110px;">
+                    <img src="file:///home/gabriel/Projetos/data-platform-dev/relatorios/logo_gritsch.png" class="logo-img" alt="Gritsch" />
+                </td>
+                <td class="header-title">
+                    <h1>DETALHAMENTO OPERACIONAL & AUDITORIA</h1>
+                    <p>Visão Consolidada | Período: <strong>05/08/2026 a 19/08/2026</strong></p>
+                </td>
+            </tr>
+        </table>
+
+        <!-- 3. TOP VEÍCULOS DA FROTA NACIONAL (TABELA SEQUENCIAL 100%) -->
+        <div class="section-header">3. Ranking Nacional de Veículos Mais Ofensores (Top Unidades)</div>
+        <table class="tbl-clean">
+            <thead>
+                <tr>
+                    <th style="width:12%;">Placa</th>
+                    <th style="width:20%;">Filial</th>
+                    <th style="width:26%;">Modelo</th>
+                    <th style="width:12%;">Categoria</th>
+                    <th class="center" style="width:10%;">Rastreador</th>
+                    <th class="center" style="width:6%;">Qtd</th>
+                    <th class="right" style="width:7%;">Pico</th>
+                    <th class="right" style="width:7%;">Média</th>
+                </tr>
+            </thead>
+            <tbody>
+                
+        <tr>
+            <td class="text-bold text-primary">TBQ1G08</td>
+            <td class="text-bold">GRITSCH - GOI</td>
+            <td>MASTER 2.3 DCI GRAND FURGÃO16V DIESEL</td>
+            <td>Pesado</td>
+            <td class="center">NUXEO</td>
+            <td class="center text-bold text-danger">56</td>
+            <td class="right text-danger">135 km/h</td>
+            <td class="right text-muted">125.1 km/h</td>
+        </tr>
+        
+        <tr>
+            <td class="text-bold text-primary">UBW1J74</td>
+            <td class="text-bold">REFERÊNCIA SINOP</td>
+            <td>STRADA ENDURANCE 1.3 FLEX 8V CS</td>
+            <td>Médio</td>
+            <td class="center">3STEC</td>
+            <td class="center text-bold text-danger">32</td>
+            <td class="right text-danger">120 km/h</td>
+            <td class="right text-muted">114.3 km/h</td>
+        </tr>
+        
+        <tr>
+            <td class="text-bold text-primary">UBW4G99</td>
+            <td class="text-bold">GRITSCH - CGR</td>
+            <td>SAVEIRO ROBUST 1.6 TOTAL FLEX 16V</td>
+            <td>Médio</td>
+            <td class="center">NUXEO</td>
+            <td class="center text-bold text-danger">29</td>
+            <td class="right text-danger">147 km/h</td>
+            <td class="right text-muted">124.9 km/h</td>
+        </tr>
+        
+        <tr>
+            <td class="text-bold text-primary">UBA9H32</td>
+            <td class="text-bold">GRITSCH - RDN</td>
+            <td>MASTER 2.3 DCI EXTRA FURGÃO 16V DIESEL</td>
+            <td>Pesado</td>
+            <td class="center">NUXEO</td>
+            <td class="center text-bold text-danger">25</td>
+            <td class="right text-danger">126 km/h</td>
+            <td class="right text-muted">118.7 km/h</td>
+        </tr>
+        
+        <tr>
+            <td class="text-bold text-primary">UBW4H01</td>
+            <td class="text-bold">GRITSCH - RDN</td>
+            <td>SAVEIRO ROBUST 1.6 TOTAL FLEX 16V</td>
+            <td>Médio</td>
+            <td class="center">NUXEO</td>
+            <td class="center text-bold text-danger">24</td>
+            <td class="right text-danger">138 km/h</td>
+            <td class="right text-muted">128.0 km/h</td>
+        </tr>
+        
+        <tr>
+            <td class="text-bold text-primary">UBW4G98</td>
+            <td class="text-bold">GRITSCH - CGR</td>
+            <td>SAVEIRO ROBUST 1.6 TOTAL FLEX 16V</td>
+            <td>Médio</td>
+            <td class="center">NUXEO</td>
+            <td class="center text-bold text-danger">23</td>
+            <td class="right text-danger">159 km/h</td>
+            <td class="right text-muted">131.5 km/h</td>
+        </tr>
+        
+        <tr>
+            <td class="text-bold text-primary">UBW3I55</td>
+            <td class="text-bold">GRITSCH - CGR</td>
+            <td>SAVEIRO ROBUST 1.6 TOTAL FLEX 16V</td>
+            <td>Médio</td>
+            <td class="center">NUXEO</td>
+            <td class="center text-bold text-danger">19</td>
+            <td class="right text-danger">138 km/h</td>
+            <td class="right text-muted">125.9 km/h</td>
+        </tr>
+        
+        <tr>
+            <td class="text-bold text-primary">TAW7H30</td>
+            <td class="text-bold">GRITSCH - CRI</td>
+            <td>11-180 DELIVERY 4X2 2P (DIESEL)(E6)</td>
+            <td>Toco</td>
+            <td class="center">NUXEO</td>
+            <td class="center text-bold text-danger">17</td>
+            <td class="right text-danger">97 km/h</td>
+            <td class="right text-muted">94.0 km/h</td>
+        </tr>
+        
+            </tbody>
+        </table>
+
+        <!-- 4. TOP OCORRÊNCIAS CRÍTICAS (TABELA SEQUENCIAL 100%) -->
+        <div class="section-header">4. Maiores Velocidades Registradas na Rede</div>
+        <table class="tbl-clean">
+            <thead>
+                <tr>
+                    <th style="width:12%;">Placa</th>
+                    <th style="width:18%;">Filial</th>
+                    <th style="width:24%;">Modelo</th>
+                    <th class="center" style="width:11%;">Velocidade</th>
+                    <th class="center" style="width:16%;">Data / Hora</th>
+                    <th style="width:11%;">Local</th>
+                    <th class="center" style="width:8%;">Origem</th>
+                </tr>
+            </thead>
+            <tbody>
+                
+        <tr>
+            <td class="text-bold text-primary">UBW4G98</td>
+            <td class="text-bold">GRITSCH - CGR</td>
+            <td>SAVEIRO ROBUST 1.6 TOTAL FLEX 16V</td>
+            <td class="center text-danger">159 km/h</td>
+            <td class="center">17/08/2026 09:57</td>
+            <td>Itaquiraí/Mato Grosso do Sul</td>
+            <td class="center">NUXEO</td>
+        </tr>
+        
+        <tr>
+            <td class="text-bold text-primary">UBV3D05</td>
+            <td class="text-bold">REFERÊNCIA MARINGÁ</td>
+            <td>ONIX SEDAN PLUS 1.0 12V TB FLEX AUT.</td>
+            <td class="center text-danger">154 km/h</td>
+            <td class="center">19/08/2026 15:56</td>
+            <td>Cruzeiro Do Oeste/PR</td>
+            <td class="center">3STEC</td>
+        </tr>
+        
+        <tr>
+            <td class="text-bold text-primary">UBW4G98</td>
+            <td class="text-bold">GRITSCH - CGR</td>
+            <td>SAVEIRO ROBUST 1.6 TOTAL FLEX 16V</td>
+            <td class="center text-danger">154 km/h</td>
+            <td class="center">12/08/2026 17:00</td>
+            <td>Caarapó/Mato Grosso do Sul</td>
+            <td class="center">NUXEO</td>
+        </tr>
+        
+        <tr>
+            <td class="text-bold text-primary">SDR9E15</td>
+            <td class="text-bold">GRITSCH - BSB</td>
+            <td>GOL 1.0 FLEX 12V 5P</td>
+            <td class="center text-danger">152 km/h</td>
+            <td class="center">12/08/2026 12:59</td>
+            <td>Simolândia/Goiás</td>
+            <td class="center">NUXEO</td>
+        </tr>
+        
+        <tr>
+            <td class="text-bold text-primary">UBW4G98</td>
+            <td class="text-bold">GRITSCH - CGR</td>
+            <td>SAVEIRO ROBUST 1.6 TOTAL FLEX 16V</td>
+            <td class="center text-danger">152 km/h</td>
+            <td class="center">11/08/2026 12:48</td>
+            <td>Naviraí/Mato Grosso do Sul</td>
+            <td class="center">NUXEO</td>
+        </tr>
+        
+            </tbody>
+        </table>
+
+        <!-- 5. AUDITORIA DE ANOMALIAS DESCARTADAS (TABELA SEQUENCIAL 100%) -->
+        <div class="section-header">5. Auditoria de Qualidade — Pontos Sombra Expurgados pelo DW</div>
+        <table class="tbl-clean">
+            <thead>
+                <tr>
+                    <th style="width:14%;">Placa</th>
+                    <th style="width:22%;">Filial</th>
+                    <th class="center" style="width:12%;">Provedor</th>
+                    <th class="center" style="width:14%;">Velocidade Bruta</th>
+                    <th class="center" style="width:18%;">Data / Hora</th>
+                    <th class="center" style="width:20%;">Ação de Governança</th>
+                </tr>
+            </thead>
+            <tbody>
+                
+        <tr>
+            <td class="text-bold">BDU6J33</td>
+            <td>GRITSCH - SAO (PERUS)</td>
+            <td class="center">OMNILINK</td>
+            <td class="center text-danger">233 km/h</td>
+            <td class="center">14/08/2026 15:54</td>
+            <td class="center text-bold" style="color:#991B1B;">PONTO_SOMBRA_MAX_160 (EXPURGADO)</td>
+        </tr>
+        
+        <tr>
+            <td class="text-bold">UBK4B52</td>
+            <td>GRITSCH - BLN</td>
+            <td class="center">NUXEO</td>
+            <td class="center text-danger">224 km/h</td>
+            <td class="center">06/08/2026 17:25</td>
+            <td class="center text-bold" style="color:#991B1B;">PONTO_SOMBRA_MAX_160 (EXPURGADO)</td>
+        </tr>
+        
+        <tr>
+            <td class="text-bold">BDU6J33</td>
+            <td>GRITSCH - SAO (PERUS)</td>
+            <td class="center">OMNILINK</td>
+            <td class="center text-danger">221 km/h</td>
+            <td class="center">15/08/2026 00:52</td>
+            <td class="center text-bold" style="color:#991B1B;">PONTO_SOMBRA_MAX_160 (EXPURGADO)</td>
+        </tr>
+        
+            </tbody>
+        </table>
+
+        <!-- RODAPÉ TÉCNICO -->
+        <div class="box-info">
+            <strong>Critérios de Governança e Qualidade de Dados:</strong><br>
+            • Rastreabilidade de fontes: 3STEC, NUXEO e OMNILINK integrados via DW PostgreSQL.<br>
+            • Regras de descarte: leituras espúrias (> 160 km/h) e inconsistências são expurgadas automaticamente.<br>
+            • Contato / Suporte: <strong>torredecontrole@gritsch.com.br</strong>
+        </div>
+    </body>
+    </html>
+    

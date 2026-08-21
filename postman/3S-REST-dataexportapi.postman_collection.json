@@ -1,0 +1,713 @@
+{
+  "info": {
+    "_postman_id": "44d7d2c5-ad39-41fc-893b-073a529c1f08",
+    "name": "3S Tecnologia - DataExportAPI (REST)",
+    "description": "API REST nova da 3S (substitui o SOAP data_export.asmx), levantada via swagger.json em 04/08/2026: https://3stecnologia.eti.br/dataexportapi/swagger/index.html\n\nCOMO USAR\n1. Selecione o environment '3S REST - Dev'.\n2. Cole a senha no CURRENT VALUE da variavel 'senha'.\n3. Abra o Console (Ctrl+Alt+C).\n4. Rode '0.1 - ValidaLogin' PRIMEIRO - preenche {{token}} usado por todo o resto.\n5. Rode os blocos 01 -> 05 na ordem.\n\nBLOQUEADO ate a 3S liberar a credencial 'referencia.locadora919' para esta API (testado em 04/08/2026: HTTP 400, '3S.1041 - Usuario sem permissao de acesso ao webservice' - funciona no SOAP antigo, nao nesta API nova, sao produtos provisionados separadamente).\n\nPERGUNTAS DE CONTRATO EM ABERTO (ver notas nas requests 2.2 e 3.2):\n- idVeiculo=0 ainda significa 'frota toda' como idEquipamento=0 significava no SOAP? Ou as chamadas agora sao obrigatoriamente por veiculo?\n- Rate limit real desta API (o SOAP documentava 10/min - nao confirmado aqui).\n- Duracao do token (campo 'expiration' da resposta do login).\n- Formato exato aceito em dataInicio/dataFim (testando ISO 8601).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "00 - Login",
+      "item": [
+        {
+          "name": "0.1 - ValidaLogin",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/ValidaLogin",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "ValidaLogin"
+              ]
+            },
+            "description": "Autenticacao JWT. Sucesso: 200 + {token, expiration}. Guarda o token em {{token}} - as demais requests da collection usam Bearer Auth herdado do nivel da collection, apontando para essa variavel. Rode esta request PRIMEIRO, sempre.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"usuario\": \"{{usuario}}\",\n  \"senha\": \"{{senha}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const j = pm.response.json();",
+                  "    pm.collectionVariables.set('token', j.token || '');",
+                  "    pm.collectionVariables.set('token_expiration', j.expiration || '');",
+                  "    pm.test('Token recebido', () => pm.expect(j.token, 'campo token vazio').to.not.be.empty);",
+                  "    console.log('>>> TOKEN (primeiros 20 chars):', (j.token || '').slice(0, 20) + '...');",
+                  "    console.log('>>> EXPIRATION:', j.expiration);",
+                  "    console.log('>>> Cole isto no restante dos testes: token valido ate', j.expiration);",
+                  "} else {",
+                  "    console.log('>>> LOGIN FALHOU - revise usuario/senha/liberacao com a 3S antes de seguir.');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "0.2 - ValidaLogin negativo (senha errada)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/ValidaLogin",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "ValidaLogin"
+              ]
+            },
+            "description": "Documenta a mensagem literal de credencial invalida (esperado: 3S.10xx).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"usuario\": \"{{usuario}}\",\n  \"senha\": \"senha_propositalmente_errada\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "01 - Cadastro",
+      "item": [
+        {
+          "name": "1.1 - ListaVeiculos",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/ListaVeiculos",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "ListaVeiculos"
+              ]
+            },
+            "description": "Lista toda a frota (nao filtra por locadora/cliente no path - confirmar se o escopo devolvido ja vem restrito pela credencial). Alimenta id_veiculo_teste/id_equipamento_teste/placa_teste para as demais requests."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    let arr = null;",
+                  "    try { arr = pm.response.json(); } catch(e) {}",
+                  "    if (Array.isArray(arr) && arr.length > 0) {",
+                  "        const v = arr[0];",
+                  "        pm.collectionVariables.set('id_veiculo_teste', String(v.idVeiculo));",
+                  "        pm.collectionVariables.set('id_equipamento_teste', String(v.idEquipamento));",
+                  "        pm.collectionVariables.set('placa_teste', v.placa || '');",
+                  "        console.log('>>> TAMANHO DA FROTA:', arr.length);",
+                  "        console.log('>>> AMOSTRA (primeiro registro):', JSON.stringify(v));",
+                  "        console.log('>>> Campos do registro:', Object.keys(v).join(', '));",
+                  "    } else {",
+                  "        console.log('>>> ATENCAO: resposta nao e um array JSON. Corpo cru:', pm.response.text().slice(0,500));",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "02 - Posicoes",
+      "item": [
+        {
+          "name": "2.1 - ListaUltimaPosicaoVeiculos (idVeiculo real)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/ListaUltimaPosicaoVeiculos/{{id_veiculo_teste}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "ListaUltimaPosicaoVeiculos",
+                "{{id_veiculo_teste}}"
+              ]
+            },
+            "description": "Rota por veiculo - confirma o contrato basico antes do teste com 0."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    let arr = null;",
+                  "    try { arr = pm.response.json(); } catch(e) {}",
+                  "    console.log('>>> Ultima posicao (1 veiculo):', Array.isArray(arr) ? arr.length + ' registros' : 'resposta nao e array - ' + pm.response.text().slice(0,300));",
+                  "    if (Array.isArray(arr) && arr.length > 0) console.log('>>> amostra:', JSON.stringify(arr[0]));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2.2 - ListaUltimaPosicaoVeiculos (idVeiculo=0, testa 'frota toda')",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/ListaUltimaPosicaoVeiculos/0",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "ListaUltimaPosicaoVeiculos",
+                "0"
+              ]
+            },
+            "description": "TESTE DE CONTRATO: no SOAP antigo, idEquipamento=0 significava 'toda a frota'. Aqui a rota mudou para path param por veiculo - nao sabemos se 0 ainda funciona como coringa ou se e invalido. Decide se o design da ingestao precisa de 1 chamada (bulk) ou N chamadas (uma por veiculo, ~3169 delas)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    let arr = null;",
+                  "    try { arr = pm.response.json(); } catch(e) {}",
+                  "    console.log('>>> Ultima posicao (idVeiculo=0):', Array.isArray(arr) ? arr.length + ' registros' : 'resposta nao e array - ' + pm.response.text().slice(0,300));",
+                  "    if (Array.isArray(arr) && arr.length > 0) console.log('>>> amostra:', JSON.stringify(arr[0]));",
+                  "}",
+                  "// PERGUNTA CENTRAL: 0 devolve a frota toda (como idEquipamento=0 no SOAP",
+                  "// antigo) ou da erro/lista vazia porque agora e uma rota por veiculo?",
+                  "// Compare a contagem acima com 1.1 (ListaVeiculos)."
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2.3 - HistoricoPosicao",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/HistoricoPosicao",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "HistoricoPosicao"
+              ]
+            },
+            "description": "Formato de data e string(date-time) no schema - testando ISO 8601. Se der 400, o corpo do erro deve indicar o formato esperado.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"idVeiculo\": \"{{id_veiculo_teste}}\",\n  \"dataInicio\": \"{{data_inicio}}\",\n  \"dataFim\": \"{{data_fim}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    let arr = null;",
+                  "    try { arr = pm.response.json(); } catch(e) {}",
+                  "    console.log('>>> Historico de posicoes:', Array.isArray(arr) ? arr.length + ' registros' : 'resposta nao e array - ' + pm.response.text().slice(0,300));",
+                  "    if (Array.isArray(arr) && arr.length > 0) console.log('>>> amostra:', JSON.stringify(arr[0]));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2.4 - ListaSensores (idVeiculo real)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/ListaSensores/{{id_veiculo_teste}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "ListaSensores",
+                "{{id_veiculo_teste}}"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    let arr = null;",
+                  "    try { arr = pm.response.json(); } catch(e) {}",
+                  "    console.log('>>> Sensores do veiculo:', Array.isArray(arr) ? arr.length + ' registros' : 'resposta nao e array - ' + pm.response.text().slice(0,300));",
+                  "    if (Array.isArray(arr) && arr.length > 0) console.log('>>> amostra:', JSON.stringify(arr[0]));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "03 - RetornaDados (metodo central)",
+      "item": [
+        {
+          "name": "3.1 - Bootstrap por veiculo (todos os cursores em 0)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/RetornaDados",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "RetornaDados"
+              ]
+            },
+            "description": "Modelo agora exige idVeiculo (nao idEquipamento). Todos os IDs em 0 = bootstrap.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"idVeiculo\": \"{{id_veiculo_teste}}\",\n  \"idPosicao\": 0,\n  \"idSensor\": 0,\n  \"idMensagem\": 0,\n  \"idTelemetria\": 0,\n  \"idAlertaVelocidade\": 0,\n  \"idAlertaSensor\": 0,\n  \"idAlertaTemperatura\": 0,\n  \"idCercaAlvo\": 0,\n  \"idCercaCheckPoint\": 0,\n  \"idCercaLogradouro\": 0,\n  \"idCercaPoligonal\": 0,\n  \"idCercaRota\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    let j = null;",
+                  "    try { j = pm.response.json(); } catch(e) {}",
+                  "    if (j && j.dados) {",
+                  "        const d = j.dados;",
+                  "        Object.keys(d).forEach(k => console.log('>>> ' + k + ':', (d[k]||[]).length, 'registros'));",
+                  "    } else {",
+                  "        console.log('>>> resposta sem campo dados. Corpo cru:', pm.response.text().slice(0,500));",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3.2 - Bootstrap idVeiculo=0 (testa 'frota toda')",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/RetornaDados",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "RetornaDados"
+              ]
+            },
+            "description": "TESTE DE CONTRATO - ver nota da 2.2. Decide o desenho de todo o workflow de eventos/telemetria.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"idVeiculo\": 0,\n  \"idPosicao\": 0,\n  \"idSensor\": 0,\n  \"idMensagem\": 0,\n  \"idTelemetria\": 0,\n  \"idAlertaVelocidade\": 0,\n  \"idAlertaSensor\": 0,\n  \"idAlertaTemperatura\": 0,\n  \"idCercaAlvo\": 0,\n  \"idCercaCheckPoint\": 0,\n  \"idCercaLogradouro\": 0,\n  \"idCercaPoligonal\": 0,\n  \"idCercaRota\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    let j = null;",
+                  "    try { j = pm.response.json(); } catch(e) {}",
+                  "    if (j && j.dados) {",
+                  "        const d = j.dados;",
+                  "        Object.keys(d).forEach(k => console.log('>>> ' + k + ':', (d[k]||[]).length, 'registros'));",
+                  "    } else {",
+                  "        console.log('>>> resposta sem campo dados. Corpo cru:', pm.response.text().slice(0,500));",
+                  "    }",
+                  "}",
+                  "// Mesma pergunta central da 2.2: 0 ainda cobre a frota toda?",
+                  "// Se der erro de validacao (idVeiculo invalido), a ingestao precisa",
+                  "// virar 1 chamada POR VEICULO - muda a conta de rate limit e de tempo",
+                  "// de execucao do workflow inteiro."
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "04 - Ocorrencias e Distancia",
+      "item": [
+        {
+          "name": "4.1 - HistoricoOcorrencia (com logradouro)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/HistoricoOcorrencia",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "HistoricoOcorrencia"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"idVeiculo\": \"{{id_veiculo_teste}}\",\n  \"dataInicio\": \"{{data_inicio}}\",\n  \"dataFim\": \"{{data_fim}}\",\n  \"blnLogradouro\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    let j = null; try { j = pm.response.json(); } catch(e) {}",
+                  "    const h = j && j.historicoOcorrencia;",
+                  "    if (h) Object.keys(h).forEach(k => console.log('>>> ' + k + ':', (h[k]||[]).length, 'registros'));",
+                  "    else console.log('>>> corpo cru:', pm.response.text().slice(0,500));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4.2 - HistoricoOcorrencia (sem logradouro)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/HistoricoOcorrencia",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "HistoricoOcorrencia"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"idVeiculo\": \"{{id_veiculo_teste}}\",\n  \"dataInicio\": \"{{data_inicio}}\",\n  \"dataFim\": \"{{data_fim}}\",\n  \"blnLogradouro\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "console.log('>>> tamanho da resposta (bytes):', pm.response.text().length);",
+                  "console.log('>>> compare com 4.1 para medir quanto payload o endereco adiciona');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4.3 - RetornaDistanciaVeiculo",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/RetornaDistanciaVeiculo",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "RetornaDistanciaVeiculo"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"idVeiculo\": \"{{id_veiculo_teste}}\",\n  \"dataInicio\": \"{{data_inicio}}\",\n  \"dataFim\": \"{{data_fim}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) console.log('>>> resposta:', pm.response.text().slice(0,500));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "05 - Erros e limites",
+      "item": [
+        {
+          "name": "5.1 - idVeiculo inexistente (negativo)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/ListaUltimaPosicaoVeiculos/999999999",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "ListaUltimaPosicaoVeiculos",
+                "999999999"
+              ]
+            },
+            "description": "Documenta se devolve 3S.xxxx, 404, ou lista vazia."
+          }
+        },
+        {
+          "name": "5.2 - Sem token (negativo)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/ListaVeiculos",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "ListaVeiculos"
+              ]
+            },
+            "description": "Confirma que a rota exige Bearer mesmo sem estar marcada explicitamente no swagger.",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "5.3 - Burst rate limit (rode via Collection Runner, delay 0)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/ValidaLogin",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "ValidaLogin"
+              ]
+            },
+            "description": "Duplique esta request 12x numa pasta e rode com Collection Runner, delay 0, para descobrir o rate limit real desta API (o SOAP antigo documentava 10/min, mas isso NAO esta confirmado aqui).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"usuario\": \"{{usuario}}\",\n  \"senha\": \"{{senha}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// ===================================================================",
+          "// Guard compartilhado - roda em TODA request da collection.",
+          "//",
+          "// CONFIRMADO por teste real em 04/08/2026 (nao e o que o swagger sugere):",
+          "// erro vem como TEXTO PURO \"3S.xxxx - mensagem\", Content-Type text/plain,",
+          "// independente do que o swagger.json documenta como schema de erro",
+          "// (ErroProcessamento em JSON). Exemplo real capturado:",
+          "//   HTTP 400, Content-Type: text/plain; charset=utf-8",
+          "//   corpo: \"3S.1041 - Usuario sem permissao de acesso ao webservice.\"",
+          "//",
+          "// Sucesso TAMBEM pode vir com Content-Type text/plain mesmo quando o",
+          "// corpo e JSON de verdade (o swagger declara text/plain nos 200 de",
+          "// varios endpoints) - por isso o guard tenta JSON.parse sempre, e nao",
+          "// confia no header Content-Type para decidir o formato.",
+          "// ===================================================================",
+          "const raw = pm.response.text();",
+          "const status = pm.response.code;",
+          "",
+          "let parsed = null;",
+          "try { parsed = JSON.parse(raw); } catch (e) { /* nao e JSON, ok */ }",
+          "",
+          "const ehNegativo = pm.info.requestName.toLowerCase().includes(\"negativo\");",
+          "const matchErro = raw.match(/3S\\.\\d{3,5}\\s*-\\s*.+/);",
+          "",
+          "if (ehNegativo) {",
+          "    pm.test(\"Retornou erro 3S.xxxx como esperado\",",
+          "        () => pm.expect(matchErro, \"esperava um erro 3S.xxxx no corpo\").to.not.be.null);",
+          "    if (matchErro) console.log(\">>> [NEGATIVO] \" + matchErro[0].trim());",
+          "} else {",
+          "    pm.test(\"HTTP 2xx\", () => pm.expect(status).to.be.within(200, 299));",
+          "    if (matchErro) console.log(\">>> ATENCAO erro inesperado: \" + matchErro[0].trim());",
+          "}",
+          "",
+          "console.log(\">>> Content-Type real:\", pm.response.headers.get(\"Content-Type\"));",
+          "console.log(\">>> Corpo e JSON valido?\", parsed !== null);",
+          "",
+          "pm.collectionVariables.set(\"last_raw\", raw.slice(0, 3000));",
+          "pm.collectionVariables.set(\"last_is_json\", parsed !== null ? \"true\" : \"false\");"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "token_expiration",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "last_raw",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "last_is_json",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}

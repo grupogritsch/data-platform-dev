@@ -68,6 +68,23 @@ services:
       - N8N_BLOCK_COMMAND_EXECUTION=false
       - N8N_EXECUTIONS_PROCESS=main
       - N8N_SECURE_COOKIE=false
+      # NAO USADO PELOS WORKFLOWS 3S ATUALMENTE — mantido so como referencia.
+      # Tentativa 1: ler a credencial 3S via $env em Code nodes. Falhou em
+      # producao ("access to env vars denied") porque o admin do n8n de
+      # producao nao tem como liberar N8N_BLOCK_ENV_ACCESS_IN_NODE (sem
+      # acesso a este docker-compose la).
+      # Tentativa 2: credencial nativa do n8n (HTTP Basic Auth) lida via
+      # $credentials dentro do node HTTP Request. Tambem falhou em producao
+      # (HTTP 400 vazio da propria 3S assim que a credencial foi anexada —
+      # suspeita: header Authorization que esse tipo de credencial sempre
+      # adiciona e que nunca tinha sido testado contra este endpoint).
+      # Solucao adotada: usuario/senha como literais dentro do Code "Monta
+      # XML SOAP" de cada workflow (colados na mao apos importar, nao
+      # versionados no git) — ver Workflows - n8n/3S - 10 a 13 e o runbook
+      # em Gestao-rastreadores/docs/runbook-deploy-producao.md, Fase 2.
+      # - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      # - TRES_S_USUARIO=${TRES_S_USUARIO}
+      # - TRES_S_SENHA=${TRES_S_SENHA}
     volumes:
       - n8n_data:/home/node/.n8n
       - ./n8n/data:/data
