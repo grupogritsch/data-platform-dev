@@ -1,0 +1,91 @@
+{
+  "name": "GOLD - 8 - MV KPIs Combustivel Diario",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-640, 0],
+      "id": "a1b2c3d4-0009-4000-8000-000000000001",
+      "name": "Executar Manualmente"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 6 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [-640, 200],
+      "id": "a1b2c3d4-0009-4000-8000-000000000002",
+      "name": "Refresh Diário"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DROP MATERIALIZED VIEW IF EXISTS torre.gold_mv_kpis_combustivel_diario CASCADE;\n\nCREATE MATERIALIZED VIEW torre.gold_mv_kpis_combustivel_diario AS\nSELECT\n  data,\n  EXTRACT(DOW FROM data)::int                                   AS dia_semana,\n  CASE EXTRACT(DOW FROM data)\n    WHEN 0 THEN 'Domingo'\n    WHEN 1 THEN 'Segunda'\n    WHEN 2 THEN 'Terça'\n    WHEN 3 THEN 'Quarta'\n    WHEN 4 THEN 'Quinta'\n    WHEN 5 THEN 'Sexta'\n    WHEN 6 THEN 'Sábado'\n  END                                                           AS dia_semana_nome,\n  CASE WHEN EXTRACT(DOW FROM data) IN (0, 6)\n    THEN FALSE ELSE TRUE\n  END                                                           AS eh_dia_util,\n  TO_CHAR(data, 'YYYY-MM')                                      AS ano_mes,\n  filial_nome,\n  filial_estado,\n  filial_regiao,\n  grupo_combustivel,\n  grupo_veiculo,\n  COUNT(*) FILTER (WHERE NOT transacao_estornada)               AS qtd_abastecimentos,\n  COUNT(DISTINCT placa) FILTER (WHERE NOT transacao_estornada)  AS qtd_veiculos,\n  SUM(valor_liquido) FILTER (WHERE NOT transacao_estornada)     AS total_valor_liquido,\n  SUM(litragem)      FILTER (WHERE NOT transacao_estornada)     AS total_litros,\n  ROUND(\n    SUM(valor_liquido) FILTER (WHERE NOT transacao_estornada)\n    / NULLIF(SUM(litragem) FILTER (WHERE NOT transacao_estornada), 0)\n  , 4)                                                          AS preco_medio_ponderado\nFROM torre.gold_truckpag_combustivel\nWHERE filial_nome IS NOT NULL\nGROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10\nHAVING COUNT(*) FILTER (WHERE NOT transacao_estornada) > 0\nWITH DATA;\n\nCREATE INDEX idx_mv_kpis_comb_diario_data\n  ON torre.gold_mv_kpis_combustivel_diario (data);\n\nCREATE INDEX idx_mv_kpis_comb_diario_ano_mes\n  ON torre.gold_mv_kpis_combustivel_diario (ano_mes);\n\nCREATE INDEX idx_mv_kpis_comb_diario_filial\n  ON torre.gold_mv_kpis_combustivel_diario (filial_nome);\n\nSELECT 'MV gold_mv_kpis_combustivel_diario criada' AS status;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-400, 100],
+      "id": "a1b2c3d4-0009-4000-8000-000000000010",
+      "name": "Criar MV",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Totais gerais\nSELECT\n  COUNT(DISTINCT data)                          AS dias_na_mv,\n  COUNT(*)                                      AS linhas_mv,\n  MIN(data)                                     AS data_mais_antiga,\n  MAX(data)                                     AS data_mais_recente,\n  SUM(qtd_abastecimentos)                           AS total_transacoes,\n  ROUND(SUM(total_valor_liquido)::numeric, 2)   AS total_gasto_liquido\nFROM torre.gold_mv_kpis_combustivel_diario;\n\n-- Média diária por tipo de dia (útil vs fim de semana) — últimos 30 dias\n-- Agrega por dia primeiro, depois tira a média — base para o GOLD-9\nSELECT\n  eh_dia_util,\n  dia_semana_nome,\n  COUNT(DISTINCT data)                              AS qtd_dias,\n  ROUND(AVG(total_por_dia)::numeric, 2)             AS media_valor_dia,\n  ROUND(AVG(litros_por_dia)::numeric, 2)            AS media_litros_dia\nFROM (\n  SELECT\n    data,\n    eh_dia_util,\n    dia_semana_nome,\n    SUM(total_valor_liquido) AS total_por_dia,\n    SUM(total_litros)        AS litros_por_dia\n  FROM torre.gold_mv_kpis_combustivel_diario\n  WHERE data >= CURRENT_DATE - INTERVAL '30 days'\n    AND data < CURRENT_DATE\n  GROUP BY data, eh_dia_util, dia_semana_nome\n) diarios\nGROUP BY eh_dia_util, dia_semana_nome\nORDER BY eh_dia_util DESC, dia_semana_nome;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-160, 100],
+      "id": "a1b2c3d4-0009-4000-8000-000000000011",
+      "name": "Validar",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Executar Manualmente": {
+      "main": [[{"node": "Criar MV", "type": "main", "index": 0}]]
+    },
+    "Refresh Diário": {
+      "main": [[{"node": "Criar MV", "type": "main", "index": 0}]]
+    },
+    "Criar MV": {
+      "main": [[{"node": "Validar", "type": "main", "index": 0}]]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "a1b2c3d4-0009-4000-8000-000000000000",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fb581638443806838dcc4ad5d9ab57cd83fc9fe2e7f923a0752e9d8321c3faf5"
+  },
+  "id": "GOLD008mvKpisCombDiario",
+  "tags": [
+    {"name": "gold"},
+    {"name": "torre-de-controle"}
+  ]
+}

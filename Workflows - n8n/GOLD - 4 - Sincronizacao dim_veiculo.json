@@ -1,0 +1,181 @@
+{
+  "name": "GOLD - 4 - Sincronizacao dim_veiculo",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-640, 0],
+      "id": "a1b2c3d4-0005-4000-8000-000000000001",
+      "name": "Executar Manualmente"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 4 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [-640, 200],
+      "id": "a1b2c3d4-0005-4000-8000-000000000002",
+      "name": "Sincronização Diária"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE SCHEMA IF NOT EXISTS torre;\n\nCREATE TABLE IF NOT EXISTS torre.gold_dim_veiculo (\n  placa                            TEXT PRIMARY KEY,\n  modelo_raw                       TEXT,\n  grupo_veiculo                    TEXT,\n  filial_operacional               TEXT,\n  situacao_veiculo                 TEXT,\n  tanque_litros                    NUMERIC(8,2),\n  ano_modelo                       SMALLINT,\n  ano_fabricacao                   SMALLINT,\n  montadora                        TEXT,\n  odometro_confirmado              NUMERIC(12,0),\n  ultima_manutencao                DATE,\n  ultima_manutencao_preventiva     DATE,\n  km_ultima_manutencao_preventiva  NUMERIC(12,0),\n  atualizado_em                    TIMESTAMPTZ DEFAULT NOW()\n);\n\n-- Garante colunas novas em instâncias existentes (idempotente)\nALTER TABLE torre.gold_dim_veiculo\n  ADD COLUMN IF NOT EXISTS tanque_litros                   NUMERIC(8,2),\n  ADD COLUMN IF NOT EXISTS ano_modelo                      SMALLINT,\n  ADD COLUMN IF NOT EXISTS ano_fabricacao                  SMALLINT,\n  ADD COLUMN IF NOT EXISTS montadora                       TEXT,\n  ADD COLUMN IF NOT EXISTS odometro_confirmado             NUMERIC(12,0),\n  ADD COLUMN IF NOT EXISTS ultima_manutencao               DATE,\n  ADD COLUMN IF NOT EXISTS ultima_manutencao_preventiva    DATE,\n  ADD COLUMN IF NOT EXISTS km_ultima_manutencao_preventiva NUMERIC(12,0);\n\nCREATE TABLE IF NOT EXISTS torre.gold_hist_veiculo (\n  id                 SERIAL PRIMARY KEY,\n  placa              TEXT NOT NULL,\n  filial_operacional TEXT NOT NULL,\n  situacao_veiculo   TEXT,\n  valido_de          DATE NOT NULL DEFAULT CURRENT_DATE,\n  valido_ate         DATE,\n  atual              BOOLEAN DEFAULT TRUE,\n  criado_em          TIMESTAMPTZ DEFAULT NOW()\n);\n\nCREATE INDEX IF NOT EXISTS idx_hist_veiculo_placa\n  ON torre.gold_hist_veiculo (placa);\n\nCREATE INDEX IF NOT EXISTS idx_hist_veiculo_vigente\n  ON torre.gold_hist_veiculo (placa, valido_de, valido_ate);\n\nCREATE INDEX IF NOT EXISTS idx_hist_veiculo_filial\n  ON torre.gold_hist_veiculo (filial_operacional, valido_de, valido_ate);\n\nCREATE UNIQUE INDEX IF NOT EXISTS idx_hist_veiculo_atual_unico\n  ON torre.gold_hist_veiculo (placa) WHERE atual = TRUE;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-400, 100],
+      "id": "a1b2c3d4-0005-4000-8000-000000000010",
+      "name": "Criar Tabelas",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- ATENÇÃO: verifique os nomes de coluna no SQL Server antes de rodar.\n-- Convenção assumida: PascalCase igual às colunas já existentes.\nSELECT\n    v.Placa                         AS placa,\n    v.Modelo                        AS modelo_raw,\n    v.FilialOperacional             AS filial_operacional,\n    v.SituacaoVeiculo               AS situacao_veiculo,\n    v.TanqueLitros                  AS tanque_litros,\n    v.AnoModelo                     AS ano_modelo,\n    v.AnoFabricacao                 AS ano_fabricacao,\n    v.Montadora                     AS montadora,\n    v.OdometroConfirmado            AS odometro_confirmado,\n    v.UltimaManutencao              AS ultima_manutencao,\n    v.UltimaManutencaoPreventiva    AS ultima_manutencao_preventiva,\n    v.KmUltimaManutencaoPreventiva  AS km_ultima_manutencao_preventiva\nFROM referencia.dbo.veiculos v;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.microsoftSql",
+      "typeVersion": 1.1,
+      "position": [-160, 100],
+      "id": "a1b2c3d4-0005-4000-8000-000000000003",
+      "name": "Buscar Veículos Bluefleet",
+      "credentials": {
+        "microsoftSql": {
+          "id": "EOmaFSibEAV8IGsL",
+          "name": "SQLserver- Bluefleet"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Consolida items do Bluefleet em 1 item para\n// disparar o próximo nó (PG) apenas uma vez.\n// Dados originais acessíveis via $('Buscar Veículos Bluefleet').all()\nconst total = $input.all().length;\nconsole.log('[INFO] Veículos recebidos do Bluefleet: ' + total);\nreturn [{ json: { totalBluefleet: total } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [80, 100],
+      "id": "a1b2c3d4-0005-4000-8000-000000000011",
+      "name": "Preparar Sync"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT placa, modelo_raw, grupo_veiculo, filial_operacional, situacao_veiculo,\n       tanque_litros, ano_modelo, ano_fabricacao, montadora,\n       odometro_confirmado, ultima_manutencao, ultima_manutencao_preventiva,\n       km_ultima_manutencao_preventiva\nFROM torre.gold_dim_veiculo;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [320, 100],
+      "id": "a1b2c3d4-0005-4000-8000-000000000012",
+      "name": "PG Ler Estado Atual",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ========================================================\n// Detectar Mudanças — SCD Tipo 2\n// Compara dados novos (Bluefleet) com estado atual (dim_veiculo)\n// Gera SQL para: histórico (mudanças) + upsert (estado atual)\n// ========================================================\nconst bluefleet = $('Buscar Veículos Bluefleet').all();\nconst atuais = $input.all();\n\n// Mapa do estado atual: placa → dados\nconst mapAtual = {};\nfor (const item of atuais) {\n  const placa = (item.json.placa || '').toUpperCase().trim();\n  if (placa) mapAtual[placa] = item.json;\n}\n\nconst esc = (v) => v != null ? String(v).replace(/'/g, \"''\") : '';\n\n// Formata valor para SQL: NULL literal quando ausente, aspas para strings\nconst sqlStr  = (v) => v != null && v !== '' ? \"'\" + esc(v) + \"'\" : 'NULL';\nconst sqlNum  = (v) => v != null && v !== '' ? Number(v)         : 'NULL';\nconst sqlDate = (v) => v != null && v !== '' ? \"'\" + esc(v) + \"'\" : 'NULL';\n\nlet sqlHist = '';\nlet countMudancas = 0;\nlet countNovos = 0;\nconst upsertValues = [];\nconst detalhes = [];  // log de mudanças para debug\n\nfor (const item of bluefleet) {\n  const placa = (item.json.placa || '').trim().toUpperCase().replace(/[\\s-]/g, '');\n  if (!placa) continue;\n\n  const filialNova    = (item.json.filial_operacional || '').trim();\n  const situacaoNova  = (item.json.situacao_veiculo   || '').trim();\n  const modeloRaw     = (item.json.modelo_raw          || '').trim();\n\n  // Novos campos técnicos\n  const tanqueLitros                 = sqlNum(item.json.tanque_litros);\n  const anoModelo                    = sqlNum(item.json.ano_modelo);\n  const anoFabricacao                = sqlNum(item.json.ano_fabricacao);\n  const montadora                    = sqlStr(item.json.montadora);\n  const odometroConfirmado           = sqlNum(item.json.odometro_confirmado);\n  const ultimaManutencao             = sqlDate(item.json.ultima_manutencao);\n  const ultimaManutencaoPreventiva   = sqlDate(item.json.ultima_manutencao_preventiva);\n  const kmUltimaManutencaoPreventiva = sqlNum(item.json.km_ultima_manutencao_preventiva);\n\n  const atual = mapAtual[placa];\n\n  if (!atual) {\n    // Veículo novo — primeiro registro no histórico\n    countNovos++;\n    sqlHist += \"INSERT INTO torre.gold_hist_veiculo \"\n      + \"(placa, filial_operacional, situacao_veiculo, valido_de, atual) VALUES (\"\n      + \"'\" + esc(placa) + \"', \"\n      + \"'\" + esc(filialNova) + \"', \"\n      + \"'\" + esc(situacaoNova) + \"', \"\n      + \"CURRENT_DATE, TRUE) \"\n      + \"ON CONFLICT (placa) WHERE atual = TRUE DO NOTHING;\\n\";\n  } else {\n    // Veículo existe — verificar mudanças\n    const mudouFilial    = (atual.filial_operacional || '').trim() !== filialNova;\n    const mudouSituacao  = (atual.situacao_veiculo   || '').trim() !== situacaoNova;\n\n    if (mudouFilial || mudouSituacao) {\n      countMudancas++;\n      detalhes.push(placa + ': '\n        + (mudouFilial   ? 'filial ['    + (atual.filial_operacional||'') + ' → ' + filialNova   + '] ' : '')\n        + (mudouSituacao ? 'situacao ['  + (atual.situacao_veiculo  ||'') + ' → ' + situacaoNova + ']'  : ''));\n\n      // Fechar registro anterior\n      sqlHist += \"UPDATE torre.gold_hist_veiculo SET \"\n        + \"valido_ate = CURRENT_DATE - INTERVAL '1 day', \"\n        + \"atual = FALSE \"\n        + \"WHERE placa = '\" + esc(placa) + \"' AND atual = TRUE;\\n\";\n\n      // Abrir novo registro\n      sqlHist += \"INSERT INTO torre.gold_hist_veiculo \"\n        + \"(placa, filial_operacional, situacao_veiculo, valido_de, atual) VALUES (\"\n        + \"'\" + esc(placa) + \"', \"\n        + \"'\" + esc(filialNova) + \"', \"\n        + \"'\" + esc(situacaoNova) + \"', \"\n        + \"CURRENT_DATE, TRUE);\\n\";\n    }\n  }\n\n  // Upsert value para dim_veiculo (todos os campos)\n  upsertValues.push(\n    \"('\" + esc(placa) + \"', \"\n    + \"'\" + esc(modeloRaw) + \"', \"\n    + \"torre.gold_classificar_veiculo('\" + esc(modeloRaw) + \"'), \"\n    + \"'\" + esc(filialNova) + \"', \"\n    + \"'\" + esc(situacaoNova) + \"', \"\n    + tanqueLitros + \", \"\n    + anoModelo + \", \"\n    + anoFabricacao + \", \"\n    + montadora + \", \"\n    + odometroConfirmado + \", \"\n    + ultimaManutencao + \", \"\n    + ultimaManutencaoPreventiva + \", \"\n    + kmUltimaManutencaoPreventiva + \", \"\n    + \"NOW())\"\n  );\n}\n\n// Build batched upsert SQL\nlet sqlUpsert = '';\nconst chunkSize = 500;\nfor (let i = 0; i < upsertValues.length; i += chunkSize) {\n  const chunk = upsertValues.slice(i, i + chunkSize);\n  sqlUpsert += \"INSERT INTO torre.gold_dim_veiculo\\n\"\n    + \"  (placa, modelo_raw, grupo_veiculo, filial_operacional, situacao_veiculo,\\n\"\n    + \"   tanque_litros, ano_modelo, ano_fabricacao, montadora,\\n\"\n    + \"   odometro_confirmado, ultima_manutencao, ultima_manutencao_preventiva,\\n\"\n    + \"   km_ultima_manutencao_preventiva, atualizado_em)\\n\"\n    + \"VALUES\\n\"\n    + chunk.join(\",\\n\")\n    + \"\\nON CONFLICT (placa) DO UPDATE SET\\n\"\n    + \"  modelo_raw                       = EXCLUDED.modelo_raw,\\n\"\n    + \"  grupo_veiculo                    = torre.gold_classificar_veiculo(EXCLUDED.modelo_raw),\\n\"\n    + \"  filial_operacional               = EXCLUDED.filial_operacional,\\n\"\n    + \"  situacao_veiculo                 = EXCLUDED.situacao_veiculo,\\n\"\n    + \"  tanque_litros                    = EXCLUDED.tanque_litros,\\n\"\n    + \"  ano_modelo                       = EXCLUDED.ano_modelo,\\n\"\n    + \"  ano_fabricacao                   = EXCLUDED.ano_fabricacao,\\n\"\n    + \"  montadora                        = EXCLUDED.montadora,\\n\"\n    + \"  odometro_confirmado              = EXCLUDED.odometro_confirmado,\\n\"\n    + \"  ultima_manutencao                = EXCLUDED.ultima_manutencao,\\n\"\n    + \"  ultima_manutencao_preventiva     = EXCLUDED.ultima_manutencao_preventiva,\\n\"\n    + \"  km_ultima_manutencao_preventiva  = EXCLUDED.km_ultima_manutencao_preventiva,\\n\"\n    + \"  atualizado_em                    = NOW();\\n\";\n}\n\nif (!sqlHist) sqlHist = \"SELECT 'Nenhuma mudança detectada no histórico' AS status;\";\n\nconsole.log('[INFO] Total Bluefleet: ' + bluefleet.length\n  + ' | Estado atual: ' + atuais.length\n  + ' | Novos: ' + countNovos\n  + ' | Mudanças: ' + countMudancas);\nif (detalhes.length > 0) {\n  console.log('[MUDANÇAS] ' + detalhes.join(' | '));\n}\n\nreturn [{\n  json: {\n    sqlHist,\n    sqlUpsert,\n    totalProcessados: bluefleet.length,\n    totalEstadoAtual: atuais.length,\n    totalNovos: countNovos,\n    totalMudancas: countMudancas,\n    detalhes: detalhes\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [560, 100],
+      "id": "a1b2c3d4-0005-4000-8000-000000000013",
+      "name": "Detectar Mudanças"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.sqlHist }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [800, 100],
+      "id": "a1b2c3d4-0005-4000-8000-000000000014",
+      "name": "Processar Histórico",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $('Detectar Mudanças').first().json.sqlUpsert }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [1040, 100],
+      "id": "a1b2c3d4-0005-4000-8000-000000000015",
+      "name": "Upsert dim_veiculo",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Executar Manualmente": {
+      "main": [[{"node": "Criar Tabelas", "type": "main", "index": 0}]]
+    },
+    "Sincronização Diária": {
+      "main": [[{"node": "Criar Tabelas", "type": "main", "index": 0}]]
+    },
+    "Criar Tabelas": {
+      "main": [[{"node": "Buscar Veículos Bluefleet", "type": "main", "index": 0}]]
+    },
+    "Buscar Veículos Bluefleet": {
+      "main": [[{"node": "Preparar Sync", "type": "main", "index": 0}]]
+    },
+    "Preparar Sync": {
+      "main": [[{"node": "PG Ler Estado Atual", "type": "main", "index": 0}]]
+    },
+    "PG Ler Estado Atual": {
+      "main": [[{"node": "Detectar Mudanças", "type": "main", "index": 0}]]
+    },
+    "Detectar Mudanças": {
+      "main": [[{"node": "Processar Histórico", "type": "main", "index": 0}]]
+    },
+    "Processar Histórico": {
+      "main": [[{"node": "Upsert dim_veiculo", "type": "main", "index": 0}]]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "a1b2c3d4-0005-4000-8000-000000000000",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fb581638443806838dcc4ad5d9ab57cd83fc9fe2e7f923a0752e9d8321c3faf5"
+  },
+  "id": "GOLD004sincVeiculo",
+  "tags": [
+    {"name": "gold"},
+    {"name": "setup"},
+    {"name": "torre-de-controle"}
+  ]
+}

@@ -1,0 +1,91 @@
+{
+  "name": "GOLD - 19 - MV Custo Veiculo Mensal",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-640, 0],
+      "id": "a1b2c3d4-0019-4000-8000-000000000001",
+      "name": "Executar Manualmente"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 7 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [-640, 200],
+      "id": "a1b2c3d4-0019-4000-8000-000000000002",
+      "name": "Refresh Diário"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Recria a MV com a definição mais recente\nDROP MATERIALIZED VIEW IF EXISTS torre.gold_mv_custo_veiculo_mensal CASCADE;\n\nCREATE MATERIALIZED VIEW torre.gold_mv_custo_veiculo_mensal AS\nWITH ped AS (\n  -- Pedágio total por placa/mês sem filial.\n  -- Quando o mesmo veículo opera em mais de uma filial no mês, o pedágio\n  -- é distribuído proporcionalmente ao combustível de cada filial no SELECT.\n  SELECT\n    TO_CHAR(data, 'YYYY-MM')           AS ano_mes,\n    placa,\n    COUNT(*)                           AS qtd_passagens,\n    ROUND(SUM(valor)::numeric, 2)      AS total_valor_pedagio\n  FROM torre.gold_truckpag_pedagio\n  WHERE filial_nome IS NOT NULL\n    AND placa_tipo IS NULL\n  GROUP BY 1, 2\n)\nSELECT\n  e.ano_mes,\n  e.ano,\n  e.mes,\n  e.placa,\n  e.filial_nome,\n  e.filial_estado,\n  e.filial_regiao,\n  e.grupo_veiculo,\n  -- Combustível (da MV de eficiência — mesma granularidade placa/mês/filial)\n  e.qtd_abastecimentos,\n  e.total_litros,\n  e.total_valor_liquido,\n  e.total_km,\n  e.km_litro,\n  e.custo_por_km,\n  e.cobertura_parcial,\n  -- Pedágio: passagens e valor distribuídos proporcionalmente ao combustível\n  -- quando o mesmo veículo aparece em mais de uma filial no mesmo mês.\n  -- Para veículo em filial única a fração é 1.0 e o valor não muda.\n  ROUND(\n    COALESCE(p.qtd_passagens, 0)\n    * e.total_valor_liquido\n    / NULLIF(SUM(e.total_valor_liquido) OVER (PARTITION BY e.placa, e.ano_mes), 0)\n  )::int                                                                             AS qtd_passagens,\n  ROUND(\n    COALESCE(p.total_valor_pedagio, 0)\n    * e.total_valor_liquido\n    / NULLIF(SUM(e.total_valor_liquido) OVER (PARTITION BY e.placa, e.ano_mes), 0)\n  , 2)                                                                              AS total_valor_pedagio,\n  -- Custo total (combustível + fração do pedágio)\n  ROUND(\n    (e.total_valor_liquido\n     + COALESCE(p.total_valor_pedagio, 0)\n       * e.total_valor_liquido\n       / NULLIF(SUM(e.total_valor_liquido) OVER (PARTITION BY e.placa, e.ano_mes), 0)\n    )::numeric\n  , 2)                                                                              AS custo_total,\n  -- Custo total por km (só quando km disponível)\n  ROUND(\n    CASE WHEN e.total_km > 0 THEN\n      (e.total_valor_liquido\n       + COALESCE(p.total_valor_pedagio, 0)\n         * e.total_valor_liquido\n         / NULLIF(SUM(e.total_valor_liquido) OVER (PARTITION BY e.placa, e.ano_mes), 0)\n      ) / e.total_km\n    END::numeric\n  , 4)                                                                              AS custo_total_por_km\nFROM torre.gold_mv_eficiencia_placa_mensal e\nLEFT JOIN ped p ON p.placa = e.placa AND p.ano_mes = e.ano_mes\nWITH DATA;\n\nCREATE INDEX idx_mv_custo_veiculo_placa\n  ON torre.gold_mv_custo_veiculo_mensal (placa);\nCREATE INDEX idx_mv_custo_veiculo_ano_mes\n  ON torre.gold_mv_custo_veiculo_mensal (ano_mes);\nCREATE INDEX idx_mv_custo_veiculo_filial\n  ON torre.gold_mv_custo_veiculo_mensal (filial_nome);\nCREATE INDEX idx_mv_custo_veiculo_grupo_veic\n  ON torre.gold_mv_custo_veiculo_mensal (grupo_veiculo);\n\nSELECT 'MV gold_mv_custo_veiculo_mensal criada' AS status;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-400, 100],
+      "id": "a1b2c3d4-0019-4000-8000-000000000010",
+      "name": "Criar MV",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  COUNT(*)                                          AS linhas,\n  COUNT(DISTINCT placa)                             AS veiculos,\n  COUNT(DISTINCT ano_mes)                           AS meses,\n  COUNT(*) FILTER (WHERE qtd_passagens > 0)         AS registros_com_pedagio,\n  ROUND(SUM(total_valor_liquido)::numeric, 2)       AS total_combustivel,\n  ROUND(SUM(total_valor_pedagio)::numeric, 2)       AS total_pedagio,\n  ROUND(SUM(custo_total)::numeric, 2)               AS custo_total,\n  ROUND(AVG(custo_total_por_km) FILTER\n    (WHERE custo_total_por_km IS NOT NULL)::numeric, 4) AS custo_total_km_medio\nFROM torre.gold_mv_custo_veiculo_mensal\nWHERE ano_mes >= TO_CHAR(CURRENT_DATE - INTERVAL '3 months', 'YYYY-MM');",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-160, 100],
+      "id": "a1b2c3d4-0019-4000-8000-000000000011",
+      "name": "Validar",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Executar Manualmente": {
+      "main": [[{"node": "Criar MV", "type": "main", "index": 0}]]
+    },
+    "Refresh Diário": {
+      "main": [[{"node": "Criar MV", "type": "main", "index": 0}]]
+    },
+    "Criar MV": {
+      "main": [[{"node": "Validar", "type": "main", "index": 0}]]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "a1b2c3d4-0019-4000-8000-000000000000",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fb581638443806838dcc4ad5d9ab57cd83fc9fe2e7f923a0752e9d8321c3faf5"
+  },
+  "id": "GOLD019mvCustoVeiculoMensal",
+  "tags": [
+    {"name": "gold"},
+    {"name": "torre-de-controle"}
+  ]
+}

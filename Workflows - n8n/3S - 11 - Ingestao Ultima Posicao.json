@@ -1,0 +1,334 @@
+{
+  "name": "3S - 11 - Ingestao Ultima Posicao",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "5,35 * * * *"
+            }
+          ]
+        }
+      },
+      "id": "16fb6c4a-cb35-49a4-9022-e59d1fa203ab",
+      "name": "00 - A cada 30 min (:05 e :35)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://3stecnologia.eti.br/dataexportapi/ValidaLogin",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept-Encoding",
+              "value": "identity"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "{\"usuario\": \"referencia.locadora919\", \"senha\": \"d01m04\"}"
+      },
+      "id": "eada868c-f6d9-4352-add9-5eba816e0233",
+      "name": "Aquece Sessao 3S",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        -140
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput",
+      "notes": "Credenciais reais ja preenchidas a partir do .env do data-platform-dev. Este arquivo contem SENHA — 'Workflows - n8n/' esta no .gitignore por isso."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://3stecnologia.eti.br/dataexportapi/ValidaLogin",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept-Encoding",
+              "value": "identity"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "{\"usuario\": \"referencia.locadora919\", \"senha\": \"d01m04\"}"
+      },
+      "id": "bf37ce25-be2d-484f-b9d2-41b61909c69f",
+      "name": "01 - Login",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notes": "Credenciais reais ja preenchidas a partir do .env do data-platform-dev. Este arquivo contem SENHA — 'Workflows - n8n/' esta no .gitignore por isso."
+    },
+    {
+      "parameters": {
+        "jsCode": "const t = $json.token;\n\n// Defeito REAL da API da 3S (medido 21/08/2026): apos periodo ocioso o\n// ValidaLogin as vezes devolve HTTP 200 com token de SESSAO VELHO ja vencido —\n// hex de 32 chars em vez de JWT. Foi o que derrubou as execucoes agendadas de\n// 20 e 21/08 com \"Authorization failed\" no node seguinte. Aqui vira erro\n// claro, no lugar certo.\nif (!t || typeof t !== 'string') {\n  throw new Error('[3S] Login nao devolveu token. Corpo: ' + JSON.stringify($json).slice(0, 200));\n}\nif (!t.startsWith('eyJ')) {\n  throw new Error('[3S] Login devolveu token invalido (esperado JWT, veio ' + t.length +\n    ' chars: \"' + t.slice(0, 16) + '...\"). Defeito de cache da 3S — o login de ' +\n    'aquecimento nao resolveu desta vez. Reexecutar costuma bastar.');\n}\n\n// VALIDADE: le o claim \"exp\" de DENTRO do JWT (epoch em segundos, UTC, sem\n// ambiguidade de fuso).\n//\n// NAO usar o campo \"expiration\" do corpo da resposta: ele vem em horario LOCAL\n// (BRT) e SEM sufixo de fuso, e o new Date() do Node interpreta string ISO sem\n// fuso como hora do SERVIDOR. Com o n8n em UTC, um token valido ate 11:03 BRT\n// (= 14:03 UTC) era lido como vencido as 11:03 UTC — falso positivo de 3h que\n// derrubou o 3S-10 em 21/08/2026. Confirmado antes: o claim exp do JWT marcava\n// 14:38 UTC enquanto o corpo dizia 11:38.\n//\n// Se por algum motivo nao der para decodificar, segue SEM checar validade: o\n// risco de barrar token bom e pior que o de deixar passar um vencido, porque\n// vencido falha logo adiante com erro claro da propria API.\nlet expSeg = null;\ntry {\n  const payload = JSON.parse(Buffer.from(t.split('.')[1], 'base64').toString('utf8'));\n  if (payload && payload.exp) expSeg = Number(payload.exp);\n} catch (e) { /* segue sem checar */ }\n\nif (expSeg && expSeg * 1000 <= Date.now()) {\n  throw new Error('[3S] Login devolveu JWT ja vencido (exp=' +\n    new Date(expSeg * 1000).toISOString() + ', agora=' + new Date().toISOString() +\n    '). Defeito de cache da 3S.');\n}\n\nreturn [{ json: { token: t, expiration: $json.expiration } }];"
+      },
+      "id": "4f727485-1423-4a40-8fcf-73d095a6f3d5",
+      "name": "Valida Token",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://3stecnologia.eti.br/dataexportapi/ListaUltimaPosicaoVeiculos/0",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Valida Token').first().json.token }}"
+            },
+            {
+              "name": "Accept-Encoding",
+              "value": "identity"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "4a6edaa6-5410-4977-9cd8-012f57f6d8a2",
+      "name": "02 - Request UltimaPosicao",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO bronze.tres_s_raw_response\n  (metodo, params, http_status, sucesso, tamanho_bytes, response_corpo)\nVALUES ('ListaUltimaPosicaoVeiculos', '{\"idVeiculo\":0}'::jsonb, 200, length($1) > 0, length($1), $1)\nRETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [ $('02 - Request UltimaPosicao').item.json.data ] }}"
+        }
+      },
+      "id": "2c9f949e-7c4d-482c-ac62-b48b6ecfd6a1",
+      "name": "03 - Grava Raw Response",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        660,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "notes": "NAO TESTADO nesta versao exata: 'Query Parameters' (campo options.queryReplacement) deve ser uma expressao que retorna um ARRAY, ex. {{ [ valor1, valor2 ] }} — mapeia para $1, $2... na query. Confirmado na documentacao oficial do n8n. Se o import reclamar deste campo, avise imediatamente."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, response_corpo FROM bronze.tres_s_raw_response WHERE id = $1;",
+        "options": {
+          "queryReplacement": "={{ [ $json.id ] }}"
+        }
+      },
+      "id": "b5688341-e103-4392-a84d-3ef11df8650a",
+      "name": "04 - Le Raw Response",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        880,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "jsCode": "const { response_corpo, id } = $json;\nif (!response_corpo || String(response_corpo).trim() === '') {\n  throw new Error('[3S] Resposta VAZIA (HTTP 200 com corpo vazio). Causa mais provavel: ' +\n    'token invalido ou ausente no header Authorization — a 3S devolve 200 + corpo vazio ' +\n    'nesse caso, em vez de 401. Confira o node de Login e a expressao do header.');\n}\nconst records = JSON.parse(response_corpo);\nif (Array.isArray(records) && records.length > 0 &&\n    records.every(r => !r || Object.keys(r).length === 0)) {\n  throw new Error('[3S] Resposta sem conteudo util: array contendo apenas objetos vazios ' +\n    '(ex.: [{}]). Sintoma classico de token quebrado no header Authorization.');\n}\nreturn [{ json: { records: Array.isArray(records) ? records : [], rawId: id, total: Array.isArray(records) ? records.length : 0 } }];"
+      },
+      "id": "0797a9d3-ebf1-42dc-bd8b-7ed6edda9272",
+      "name": "05 - Parse Records",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT bronze.fn_carrega_ultima_posicao($1::jsonb, $2::bigint) AS linhas;",
+        "options": {
+          "queryReplacement": "={{ [ JSON.stringify($json.records), $json.rawId ] }}"
+        }
+      },
+      "id": "f288a9b2-35eb-4a08-be4f-0658abf34aab",
+      "name": "06 - Carrega Ultima Posicao",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1320,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    }
+  ],
+  "connections": {
+    "00 - A cada 30 min (:05 e :35)": {
+      "main": [
+        [
+          {
+            "node": "Aquece Sessao 3S",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aquece Sessao 3S": {
+      "main": [
+        [
+          {
+            "node": "01 - Login",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "01 - Login": {
+      "main": [
+        [
+          {
+            "node": "Valida Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valida Token": {
+      "main": [
+        [
+          {
+            "node": "02 - Request UltimaPosicao",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "02 - Request UltimaPosicao": {
+      "main": [
+        [
+          {
+            "node": "03 - Grava Raw Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "03 - Grava Raw Response": {
+      "main": [
+        [
+          {
+            "node": "04 - Le Raw Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "04 - Le Raw Response": {
+      "main": [
+        [
+          {
+            "node": "05 - Parse Records",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "05 - Parse Records": {
+      "main": [
+        [
+          {
+            "node": "06 - Carrega Ultima Posicao",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

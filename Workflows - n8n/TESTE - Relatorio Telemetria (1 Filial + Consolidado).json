@@ -1,0 +1,287 @@
+{
+  "name": "TESTE - Relatorio Telemetria (1 Filial + Consolidado)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "e1f1a100-0001-4000-8000-000000000001",
+      "name": "00 - Disparo Manual de Teste",
+      "type": "n8n-nodes-base.manualTrigger",
+      "position": [
+        -1700,
+        400
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "jsCode": "// ==========================================================================\n// ⚙️ CONFIGURAÇÃO GLOBAL DE TESTE & TRAVAS DE SEGURANÇA\n// ==========================================================================\nreturn [{\n  json: {\n    MODO_TESTE: 'ATIVO (100% SEGURO)',\n    EMAIL_TESTE: 'gabriel.brittes@gritsch.com.br',\n    FILIAL_TESTE: 'GRITSCH - GOI',\n    DIAS_HISTORICO: 14,\n    PREFIXO_ASSUNTO: '[TESTE DE LAYOUT] '\n  }\n}];"
+      },
+      "id": "e1f1a100-0001-4000-8000-000000000002",
+      "name": "00_Config_Teste",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        -1460,
+        400
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "jsCode": "var config = $('00_Config_Teste').first().json;\nvar dias = config.DIAS_HISTORICO || 14;\n\nvar agora = new Date();\nvar fim = new Date(agora);\nvar inicio = new Date(agora);\ninicio.setDate(agora.getDate() - dias);\n\nvar fmt = function(d) {\n  return String(d.getDate()).padStart(2, '0') + '/' +\n    String(d.getMonth() + 1).padStart(2, '0') + '/' +\n    d.getFullYear();\n};\nvar fmtPG = function(d) {\n  return d.getFullYear() + '-' +\n    String(d.getMonth() + 1).padStart(2, '0') + '-' +\n    String(d.getDate()).padStart(2, '0');\n};\n\nreturn [{\n  json: {\n    dataRef: fmt(inicio) + ' a ' + fmt(fim),\n    semanaInicio: fmtPG(inicio),\n    semanaFim: fmtPG(fim),\n    emailDestinoTeste: config.EMAIL_TESTE || 'gabriel.brittes@gritsch.com.br',\n    filialTeste: config.FILIAL_TESTE || 'GRITSCH - GOI',\n    prefixoAssunto: config.PREFIXO_ASSUNTO || '[TESTE] '\n  }\n}];"
+      },
+      "id": "e1f1a100-0001-4000-8000-000000000003",
+      "name": "01 - Calcular Periodo das Datas",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        -1220,
+        400
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n  e.placa,\n  e.provedor_rastreador,\n  e.velocidade_registrada,\n  e.data_hora_alerta,\n  e.data_hora_timestamp,\n  e.data_ref,\n  e.cidade,\n  e.estado,\n  e.filial_operacional,\n  e.modelo,\n  e.grupo_veiculo,\n  COALESCE(ef.email_destino, 'goiania@gritsch.com.br') AS email_destino_original_filial,\n  COALESCE(ef.email_cc, '') AS email_cc_original_filial,\n  COALESCE(ef.cc_regional, 'ely@gritsch.com.br') AS cc_regional_original_filial,\n  COALESCE(cfg.valor, 'torredecontrole@gritsch.com.br,flavio@gritsch.com.br,fabio.pepplow@gritsch.com.br') AS cc_global_original,\n  COALESCE(ccfg.destinatarios, 'jefferson@gritsch.com.br') AS consolidado_destinatarios_db,\n  COALESCE(ccfg.cc, 'sandro@gritsch.com.br,torredecontrole@gritsch.com.br,flavio@gritsch.com.br,fabio.pepplow@gritsch.com.br') AS consolidado_cc_db\nFROM torre.vw_alertas_telemetria_saneados e\nLEFT JOIN torre.email_gritsch_filiais ef ON ef.filial_operacional = e.filial_operacional\nCROSS JOIN (\n  SELECT valor FROM torre.email_gritsch_config WHERE chave = 'cc_global' LIMIT 1\n) cfg\nCROSS JOIN (\n  SELECT \n    MAX(CASE WHEN chave = 'consolidado_destinatarios' THEN valor END) AS destinatarios,\n    MAX(CASE WHEN chave = 'consolidado_cc' THEN valor END) AS cc\n  FROM torre.email_gritsch_config\n) ccfg\nWHERE e.data_hora_timestamp >= '{{ $(\"01 - Calcular Periodo das Datas\").first().json.semanaInicio }} 00:00:00'::timestamp\n  AND e.data_hora_timestamp <= '{{ $(\"01 - Calcular Periodo das Datas\").first().json.semanaFim }} 23:59:59'::timestamp\nORDER BY e.velocidade_registrada DESC;"
+      },
+      "id": "e1f1a100-0001-4000-8000-000000000004",
+      "name": "02 - PG Buscar Eventos Saneados (DW)",
+      "type": "n8n-nodes-base.postgres",
+      "position": [
+        -980,
+        400
+      ],
+      "typeVersion": 2.5,
+      "credentials": {
+        "postgres": {
+          "id": "0nuM10NKLuw9hW1i",
+          "name": "DW - Gabriel"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "var items = $input.all();\nvar periodo = $('01 - Calcular Periodo das Datas').first().json;\nvar dataRef = periodo.dataRef;\nvar emailTeste = periodo.emailDestinoTeste || 'gabriel.brittes@gritsch.com.br';\n\nif (items.length === 0 || !items[0].json.placa) {\n  return [{ json: { _semEventos: true, dataRef: dataRef, emailDestino: emailTeste } }];\n}\n\nvar grouped = {};\nfor (var i = 0; i < items.length; i++) {\n  var d = items[i].json;\n  var filial = d.filial_operacional || 'DESCONHECIDA';\n  if (!grouped[filial]) grouped[filial] = [];\n  grouped[filial].push(d);\n}\n\nvar results = [];\nvar filiais = Object.keys(grouped);\nfor (var fi = 0; fi < filiais.length; fi++) {\n  var filial = filiais[fi];\n  var evs = grouped[filial];\n  var total = evs.length;\n  var vels = evs.map(function(e) { return parseFloat(e.velocidade_registrada) || 0; });\n  var velMax = Math.max.apply(null, vels);\n  var velMedia = Math.round((vels.reduce(function(s,v){return s+v;},0) / vels.length) * 10) / 10;\n\n  var porPlaca = {};\n  for (var ei = 0; ei < evs.length; ei++) {\n    var e = evs[ei];\n    if (!porPlaca[e.placa]) {\n      porPlaca[e.placa] = {\n        placa: e.placa,\n        modelo: e.modelo || '--',\n        grupo_veiculo: e.grupo_veiculo || 'Leve',\n        provedor: e.provedor_rastreador || 'NUXEO',\n        qtd: 0,\n        velMax: 0,\n        somaVel: 0\n      };\n    }\n    porPlaca[e.placa].qtd++;\n    var v = parseFloat(e.velocidade_registrada) || 0;\n    porPlaca[e.placa].somaVel += v;\n    if (v > porPlaca[e.placa].velMax) porPlaca[e.placa].velMax = v;\n  }\n\n  var tabelaPlacas = Object.keys(porPlaca).map(function(p) {\n    var item = porPlaca[p];\n    item.velMedia = Math.round((item.somaVel / item.qtd) * 10) / 10;\n    return item;\n  }).sort(function(a,b){ return b.qtd - a.qtd; });\n\n  var topOc = evs.slice().sort(function(a,b){\n    return (parseFloat(b.velocidade_registrada)||0) - (parseFloat(a.velocidade_registrada)||0);\n  }).slice(0, 8).map(function(e){\n    return {\n      placa: e.placa,\n      modelo: e.modelo || '--',\n      velocidade: parseFloat(e.velocidade_registrada) || 0,\n      data: e.data_hora_alerta,\n      local: (e.cidade || '') + (e.estado ? '/' + e.estado : ''),\n      origem: e.provedor_rastreador || 'NUXEO'\n    };\n  });\n\n  var porDia = {};\n  for (var ei2 = 0; ei2 < evs.length; ei2++) {\n    var dt = evs[ei2].data_ref ? String(evs[ei2].data_ref).substring(0,10) : 'desconhecido';\n    if (!porDia[dt]) porDia[dt] = { qtd: 0, max: 0 };\n    porDia[dt].qtd++;\n    var vd = parseFloat(evs[ei2].velocidade_registrada) || 0;\n    if (vd > porDia[dt].max) porDia[dt].max = vd;\n  }\n  var breakdownDias = Object.keys(porDia).sort().map(function(dia){\n    return { dia: dia, qtd: porDia[dia].qtd, velPico: porDia[dia].max };\n  });\n\n  var ccParts = [];\n  if (evs[0].email_cc_original_filial) ccParts.push(evs[0].email_cc_original_filial);\n  if (evs[0].cc_regional_original_filial) ccParts.push(evs[0].cc_regional_original_filial);\n  if (evs[0].cc_global_original) ccParts.push(evs[0].cc_global_original);\n  var emailCCOriginalFinal = ccParts.join(';').split(/[;,]+/).map(function(s){return s.trim();}).filter(Boolean).filter(function(v,i,a){return a.indexOf(v)===i;}).join(',');\n\n  results.push({ json: {\n    filial: filial,\n    dataRef: dataRef,\n    totalEventos: total,\n    qtdVeiculos: tabelaPlacas.length,\n    velMax: velMax,\n    velMedia: velMedia,\n    tabelaPlacas: tabelaPlacas,\n    topOcorrencias: topOc,\n    breakdownDias: breakdownDias,\n    emailDestinoOriginal: evs[0].email_destino_original_filial,\n    emailCCOriginal: emailCCOriginalFinal,\n    emailDestino: emailTeste,\n    consolidadoDestinatariosOriginal: evs[0].consolidado_destinatarios_db,\n    consolidadoCCOriginal: evs[0].consolidado_cc_db\n  }});\n}\n\nreturn results;"
+      },
+      "id": "e1f1a100-0001-4000-8000-000000000005",
+      "name": "03 - Agrupar Estatisticas por Filial",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        -740,
+        400
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "jsCode": "var filiais = $input.all();\nvar config = $('00_Config_Teste').first().json;\nvar filialAlvo = config.FILIAL_TESTE || 'GRITSCH - GOI';\n\nvar selecionada = filiais.find(function(f) { return f.json.filial === filialAlvo; }) || filiais[0];\nreturn [selecionada];"
+      },
+      "id": "e1f1a100-0001-4000-8000-000000000006",
+      "name": "04 - Selecionar Filial Configurada no Teste",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        -480,
+        280
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "jsCode": "var d = $json;\nvar BORDA = '#D1D5DB';\nvar AZUL_ESC = '#1E3A5F';\nvar emailDestino = d.emailDestino || 'gabriel.brittes@gritsch.com.br';\n\nvar rowsVeiculos = '';\nvar veiculos = d.tabelaPlacas || [];\nfor (var i = 0; i < veiculos.length; i++) {\n  var v = veiculos[i];\n  var bg = i % 2 === 0 ? '#FFFFFF' : '#F9FAFB';\n  rowsVeiculos += '<tr style=\"background:' + bg + '\">'\n    + '<td style=\"padding:4px 6px;border:1px solid #E5E7EB;font-weight:bold;color:' + AZUL_ESC + '\">' + v.placa + '</td>'\n    + '<td style=\"padding:4px 6px;border:1px solid #E5E7EB;\">' + (v.modelo || '--') + '</td>'\n    + '<td style=\"padding:4px 6px;border:1px solid #E5E7EB;\">' + (v.grupo_veiculo || 'Leve') + '</td>'\n    + '<td style=\"padding:4px 6px;border:1px solid #E5E7EB;text-align:center;\">' + (v.provedor || 'NUXEO') + '</td>'\n    + '<td style=\"padding:4px 6px;border:1px solid #E5E7EB;text-align:center;font-weight:bold;\">' + v.qtd + '</td>'\n    + '<td style=\"padding:4px 6px;border:1px solid #E5E7EB;text-align:right;font-weight:bold;color:#991B1B;\">' + Math.round(v.velMax) + ' km/h</td>'\n    + '<td style=\"padding:4px 6px;border:1px solid #E5E7EB;text-align:right;color:#6B7280;\">' + (v.velMedia || '--') + ' km/h</td>'\n    + '</tr>';\n}\n\nvar rowsTop = '';\nvar topOc = d.topOcorrencias || [];\nfor (var i = 0; i < topOc.length; i++) {\n  var o = topOc[i];\n  var bg = i % 2 === 0 ? '#FFFFFF' : '#F9FAFB';\n  rowsTop += '<tr style=\"background:' + bg + '\">'\n    + '<td style=\"padding:4px 6px;border:1px solid #E5E7EB;font-weight:bold;color:' + AZUL_ESC + '\">' + o.placa + '</td>'\n    + '<td style=\"padding:4px 6px;border:1px solid #E5E7EB;\">' + (o.modelo || '--') + '</td>'\n    + '<td style=\"padding:4px 6px;border:1px solid #E5E7EB;text-align:center;font-weight:bold;color:#991B1B;\">' + Math.round(o.velocidade) + ' km/h</td>'\n    + '<td style=\"padding:4px 6px;border:1px solid #E5E7EB;text-align:center;\">' + String(o.data).substring(0, 16) + '</td>'\n    + '<td style=\"padding:4px 6px;border:1px solid #E5E7EB;\">' + (o.local || '--') + '</td>'\n    + '<td style=\"padding:4px 6px;border:1px solid #E5E7EB;text-align:center;\">' + (o.origem || 'NUXEO') + '</td>'\n    + '</tr>';\n}\n\nvar rowsDias = '';\nvar bd = d.breakdownDias || [];\nfor (var i = 0; i < bd.length; i++) {\n  var b = bd[i];\n  var bg = i % 2 === 0 ? '#FFFFFF' : '#F9FAFB';\n  rowsDias += '<tr style=\"background:' + bg + '\">'\n    + '<td style=\"padding:4px 6px;border:1px solid #E5E7EB;text-align:center;font-weight:bold;\">' + b.dia + '</td>'\n    + '<td style=\"padding:4px 6px;border:1px solid #E5E7EB;text-align:center;font-weight:bold;\">' + b.qtd + '</td>'\n    + '<td style=\"padding:4px 6px;border:1px solid #E5E7EB;text-align:right;font-weight:bold;color:#991B1B;\">' + Math.round(b.velPico || 0) + ' km/h</td>'\n    + '</tr>';\n}\n\nvar html = '<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head>'\n  + '<body style=\"margin:0;padding:15px;background:#F3F4F6;font-family:Arial,sans-serif;color:#1F2937;font-size:12px;line-height:1.3;\">'\n  + '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:760px;margin:0 auto;background:#FFFFFF;border:1px solid ' + BORDA + ';border-radius:4px;overflow:hidden;\">'\n  + '<tr><td style=\"background:#FEF3C7;border-bottom:1px solid #F59E0B;padding:8px 14px;font-size:11px;color:#92400E;text-align:center;font-weight:bold;\">'\n  + '⚠️ AMBIENTE DE TESTE — NENHUM DESTINATÁRIO REAL RECEBEU ESTA MENSAGEM<br>'\n  + '<span style=\"font-weight:normal;font-size:10px;\">Enviado exclusivamente para: ' + emailDestino + ' | Destinatário Real em Produção: ' + d.emailDestinoOriginal + ' (CC: ' + (d.emailCCOriginal || 'Nenhum') + ')</span>'\n  + '</td></tr>'\n  + '<tr><td style=\"padding:14px 18px;border-bottom:2px solid ' + AZUL_ESC + ';\">'\n  + '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr>'\n  + '<td style=\"vertical-align:middle;width:110px;\"><img src=\"https://gritsch.com.br/wp-content/uploads/2022/03/logomarca-1_gritsch-1.png\" width=\"95\" style=\"display:block;\" alt=\"Gritsch\"></td>'\n  + '<td style=\"text-align:right;vertical-align:middle;\">'\n  + '<div style=\"font-size:14px;font-weight:bold;color:' + AZUL_ESC + ';\">RELATÓRIO DE TELEMETRIA & VELOCIDADE</div>'\n  + '<div style=\"font-size:11px;color:#4B5563;margin-top:2px;\">Unidade: <strong>' + d.filial + '</strong> | Período: <strong>' + d.dataRef + '</strong></div>'\n  + '</td></tr></table></td></tr>'\n  + '<tr><td style=\"padding:14px 18px;\">'\n  + '<div style=\"font-size:11px;font-weight:bold;color:' + AZUL_ESC + ';text-transform:uppercase;border-bottom:1px solid ' + AZUL_ESC + ';padding-bottom:2px;margin-bottom:6px;\">1. Resumo Consolidado da Unidade</div>'\n  + '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border-collapse:collapse;border:1px solid ' + BORDA + ';margin-bottom:12px;font-size:11px;\">'\n  + '<thead><tr style=\"background:#F3F4F6;\">'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:center;\">TOTAL DE INFRAÇÕES</th>'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:center;\">VEÍCULOS COM APONTAMENTO</th>'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:center;\">VELOCIDADE MÁXIMA</th>'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:center;\">MÉDIA DOS EXCESSOS</th>'\n  + '</tr></thead>'\n  + '<tbody><tr>'\n  + '<td style=\"padding:6px;border:1px solid ' + BORDA + ';text-align:center;font-weight:bold;color:#991B1B;font-size:13px;\">' + d.totalEventos + ' ocorrências</td>'\n  + '<td style=\"padding:6px;border:1px solid ' + BORDA + ';text-align:center;font-weight:bold;font-size:13px;\">' + d.qtdVeiculos + ' veículos</td>'\n  + '<td style=\"padding:6px;border:1px solid ' + BORDA + ';text-align:center;font-weight:bold;color:#991B1B;font-size:13px;\">' + Math.round(d.velMax) + ' km/h</td>'\n  + '<td style=\"padding:6px;border:1px solid ' + BORDA + ';text-align:center;font-weight:bold;font-size:13px;\">' + d.velMedia + ' km/h</td>'\n  + '</tr></tbody></table>'\n  + '<div style=\"font-size:11px;font-weight:bold;color:' + AZUL_ESC + ';text-transform:uppercase;border-bottom:1px solid ' + AZUL_ESC + ';padding-bottom:2px;margin-bottom:6px;\">2. Veículos com Excesso de Velocidade no Período</div>'\n  + '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border-collapse:collapse;border:1px solid ' + BORDA + ';margin-bottom:12px;font-size:11px;\">'\n  + '<thead><tr style=\"background:#F3F4F6;\">'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:left;\">PLACA</th>'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:left;\">MODELO</th>'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:left;\">CATEGORIA</th>'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:center;\">RASTREADOR</th>'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:center;\">ALERTAS</th>'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:right;\">PICO</th>'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:right;\">MÉDIA</th>'\n  + '</tr></thead>'\n  + '<tbody>' + rowsVeiculos + '</tbody></table>'\n  + '<div style=\"font-size:11px;font-weight:bold;color:' + AZUL_ESC + ';text-transform:uppercase;border-bottom:1px solid ' + AZUL_ESC + ';padding-bottom:2px;margin-bottom:6px;\">3. Ocorrências com Maiores Velocidades Registradas</div>'\n  + '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border-collapse:collapse;border:1px solid ' + BORDA + ';margin-bottom:12px;font-size:11px;\">'\n  + '<thead><tr style=\"background:#F3F4F6;\">'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:left;\">PLACA</th>'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:left;\">MODELO</th>'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:center;\">VELOCIDADE</th>'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:center;\">DATA / HORA</th>'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:left;\">LOCAL</th>'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:center;\">ORIGEM</th>'\n  + '</tr></thead>'\n  + '<tbody>' + rowsTop + '</tbody></table>'\n  + '<div style=\"font-size:11px;font-weight:bold;color:' + AZUL_ESC + ';text-transform:uppercase;border-bottom:1px solid ' + AZUL_ESC + ';padding-bottom:2px;margin-bottom:6px;\">4. Evolução do Volume por Data</div>'\n  + '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border-collapse:collapse;border:1px solid ' + BORDA + ';margin-bottom:12px;font-size:11px;\">'\n  + '<thead><tr style=\"background:#F3F4F6;\">'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:center;\">DATA</th>'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:center;\">QTD ALERTAS</th>'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:right;\">PICO REGISTRADO</th>'\n  + '</tr></thead>'\n  + '<tbody>' + rowsDias + '</tbody></table>'\n  + '<div style=\"border:1px solid ' + BORDA + ';background:#F9FAFB;padding:8px 10px;font-size:10px;color:#4B5563;border-left:3px solid ' + AZUL_ESC + ';\">'\n  + '<strong>Critérios Operacionais da Torre de Controle:</strong><br>'\n  + '• Caminhões / Pesados: tolerância de excesso > 90 km/h | Veículos Leves / Médios / Vans: tolerância > 110 km/h.<br>'\n  + '• Filtro corporativo ativo: leituras espúrias (> 160 km/h) expurgadas do banco.<br>'\n  + '• Dúvidas e tratativas: <strong>torredecontrole@gritsch.com.br</strong>'\n  + '</div></td></tr></table></body></html>';\n\nreturn [{ json: Object.assign({}, d, { htmlEmail: html, emailDestinoFinal: emailDestino }) }];"
+      },
+      "id": "e1f1a100-0001-4000-8000-000000000007",
+      "name": "05 - Gerar HTML E-mail Filial (GOI)",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        -240,
+        280
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "fromEmail": "naoresponda@gritsch.com.br",
+        "toEmail": "={{ $json.emailDestinoFinal || 'gabriel.brittes@gritsch.com.br' }}",
+        "subject": "=[TESTE DE LAYOUT] Relatório de Telemetria & Velocidade | {{ $json.filial }} | {{ $json.dataRef }}",
+        "html": "={{ $json.htmlEmail }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "e1f1a100-0001-4000-8000-000000000008",
+      "name": "06 - Enviar E-mail Teste Filial",
+      "type": "n8n-nodes-base.emailSend",
+      "position": [
+        0,
+        280
+      ],
+      "typeVersion": 2.1,
+      "credentials": {
+        "smtp": {
+          "id": "PQ487x2sKWu1B4l2",
+          "name": "Email - naoresponda@gritsch.com.br"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "var filiais = $('03 - Agrupar Estatisticas por Filial').all();\nvar periodo = $('01 - Calcular Periodo das Datas').first().json;\nvar emailTeste = periodo.emailDestinoTeste || 'gabriel.brittes@gritsch.com.br';\n\nvar totalEventosGeral = 0, velMaxGeral = 0, somaVel = 0, countVel = 0;\nvar rankingFiliais = [];\nvar todosVeiculos = [];\n\nfor (var i = 0; i < filiais.length; i++) {\n  var f = filiais[i].json;\n  totalEventosGeral += f.totalEventos;\n  if (f.velMax > velMaxGeral) velMaxGeral = f.velMax;\n  somaVel += f.velMedia * f.totalEventos;\n  countVel += f.totalEventos;\n\n  rankingFiliais.push({\n    filial: f.filial,\n    regional: f.emailCCOriginal || 'Diretoria',\n    totalEventos: f.totalEventos,\n    qtdVeiculos: f.qtdVeiculos,\n    velMax: f.velMax,\n    velMedia: f.velMedia\n  });\n\n  var tp = f.tabelaPlacas || [];\n  for (var j = 0; j < tp.length; j++) {\n    todosVeiculos.push(Object.assign({}, tp[j], { filial: f.filial }));\n  }\n}\n\nrankingFiliais.sort(function(a,b){ return b.totalEventos - a.totalEventos; });\ntodosVeiculos.sort(function(a,b){ return b.qtd - a.qtd; });\n\nvar velMediaGeral = countVel > 0 ? Math.round((somaVel / countVel) * 10) / 10 : 0;\n\nreturn [{\n  json: {\n    dataRef: periodo.dataRef,\n    emailDestinoFinal: emailTeste,\n    destinatariosConsolidadoReal: filiais[0] && filiais[0].json && filiais[0].json.consolidadoDestinatariosOriginal ? filiais[0].json.consolidadoDestinatariosOriginal : 'jefferson@gritsch.com.br',\n    ccConsolidadoReal: filiais[0] && filiais[0].json && filiais[0].json.consolidadoCCOriginal ? filiais[0].json.consolidadoCCOriginal : 'sandro@gritsch.com.br,torredecontrole@gritsch.com.br,flavio@gritsch.com.br,fabio.pepplow@gritsch.com.br',\n    totalEventosGeral: totalEventosGeral,\n    totalFiliais: rankingFiliais.length,\n    totalVeiculosGeral: todosVeiculos.length,\n    velMaxGeral: velMaxGeral,\n    velMediaGeral: velMediaGeral,\n    rankingFiliais: rankingFiliais,\n    topVeiculos: todosVeiculos.slice(0, 10)\n  }\n}];"
+      },
+      "id": "e1f1a100-0001-4000-8000-000000000009",
+      "name": "07 - Consolidar Geral Diretoria",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        -480,
+        520
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "jsCode": "var d = $json;\nvar BORDA = '#D1D5DB';\nvar AZUL_ESC = '#1E3A5F';\nvar emailDestino = d.emailDestinoFinal || 'gabriel.brittes@gritsch.com.br';\n\nvar rowsFiliais = '';\nvar rf = d.rankingFiliais || [];\nfor (var i = 0; i < rf.length; i++) {\n  var f = rf[i];\n  var pct = d.totalEventosGeral > 0 ? Math.round((f.totalEventos / d.totalEventosGeral) * 1000) / 10 : 0;\n  var bg = i % 2 === 0 ? '#FFFFFF' : '#F9FAFB';\n  rowsFiliais += '<tr style=\"background:' + bg + '\">'\n    + '<td style=\"padding:4px 6px;border:1px solid #E5E7EB;font-weight:bold;color:' + AZUL_ESC + '\">' + f.filial + '</td>'\n    + '<td style=\"padding:4px 6px;border:1px solid #E5E7EB;color:#6B7280;\">' + f.regional + '</td>'\n    + '<td style=\"padding:4px 6px;border:1px solid #E5E7EB;text-align:center;font-weight:bold;color:#991B1B;\">' + f.totalEventos + ' <span style=\"font-size:9px;color:#6B7280;\">(' + pct + '%)</span></td>'\n    + '<td style=\"padding:4px 6px;border:1px solid #E5E7EB;text-align:center;\">' + f.qtdVeiculos + '</td>'\n    + '<td style=\"padding:4px 6px;border:1px solid #E5E7EB;text-align:right;font-weight:bold;color:#991B1B;\">' + Math.round(f.velMax) + ' km/h</td>'\n    + '<td style=\"padding:4px 6px;border:1px solid #E5E7EB;text-align:right;color:#6B7280;\">' + f.velMedia + ' km/h</td>'\n    + '</tr>';\n}\n\nvar rowsVeiculos = '';\nvar tv = d.topVeiculos || [];\nfor (var j = 0; j < tv.length; j++) {\n  var v = tv[j];\n  var bg = j % 2 === 0 ? '#FFFFFF' : '#F9FAFB';\n  rowsVeiculos += '<tr style=\"background:' + bg + '\">'\n    + '<td style=\"padding:4px 6px;border:1px solid #E5E7EB;font-weight:bold;color:' + AZUL_ESC + '\">' + v.placa + '</td>'\n    + '<td style=\"padding:4px 6px;border:1px solid #E5E7EB;font-weight:bold;\">' + v.filial + '</td>'\n    + '<td style=\"padding:4px 6px;border:1px solid #E5E7EB;\">' + (v.modelo || '--') + '</td>'\n    + '<td style=\"padding:4px 6px;border:1px solid #E5E7EB;\">' + (v.grupo_veiculo || 'Leve') + '</td>'\n    + '<td style=\"padding:4px 6px;border:1px solid #E5E7EB;text-align:center;\">' + (v.provedor || 'NUXEO') + '</td>'\n    + '<td style=\"padding:4px 6px;border:1px solid #E5E7EB;text-align:center;font-weight:bold;color:#991B1B;\">' + v.qtd + '</td>'\n    + '<td style=\"padding:4px 6px;border:1px solid #E5E7EB;text-align:right;font-weight:bold;color:#991B1B;\">' + Math.round(v.velMax) + ' km/h</td>'\n    + '<td style=\"padding:4px 6px;border:1px solid #E5E7EB;text-align:right;color:#6B7280;\">' + v.velMedia + ' km/h</td>'\n    + '</tr>';\n}\n\nvar html = '<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head>'\n  + '<body style=\"margin:0;padding:15px;background:#F3F4F6;font-family:Arial,sans-serif;color:#1F2937;font-size:12px;line-height:1.3;\">'\n  + '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:760px;margin:0 auto;background:#FFFFFF;border:1px solid ' + BORDA + ';border-radius:4px;overflow:hidden;\">'\n  + '<tr><td style=\"background:#FEF3C7;border-bottom:1px solid #F59E0B;padding:8px 14px;font-size:11px;color:#92400E;text-align:center;font-weight:bold;\">'\n  + '⚠️ AMBIENTE DE TESTE — NENHUM DESTINATÁRIO REAL RECEBEU ESTA MENSAGEM<br>'\n  + '<span style=\"font-weight:normal;font-size:10px;\">Enviado exclusivamente para: ' + emailDestino + ' | Destinatário Real em Produção: ' + (d.destinatariosConsolidadoReal || 'jefferson@gritsch.com.br') + ' (CC: ' + (d.ccConsolidadoReal || 'sandro@gritsch.com.br, torredecontrole@gritsch.com.br') + ')</span>'\n  + '</td></tr>'\n  + '<tr><td style=\"padding:14px 18px;border-bottom:2px solid ' + AZUL_ESC + ';\">'\n  + '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr>'\n  + '<td style=\"vertical-align:middle;width:110px;\"><img src=\"https://gritsch.com.br/wp-content/uploads/2022/03/logomarca-1_gritsch-1.png\" width=\"95\" style=\"display:block;\" alt=\"Gritsch\"></td>'\n  + '<td style=\"text-align:right;vertical-align:middle;\">'\n  + '<div style=\"font-size:14px;font-weight:bold;color:' + AZUL_ESC + ';\">PAINEL CONSOLIDADO DE TELEMETRIA & VELOCIDADE</div>'\n  + '<div style=\"font-size:11px;color:#4B5563;margin-top:2px;\">Visão Executiva Diretoria | Período: <strong>' + d.dataRef + '</strong></div>'\n  + '</td></tr></table></td></tr>'\n  + '<tr><td style=\"padding:14px 18px;\">'\n  + '<div style=\"font-size:11px;font-weight:bold;color:' + AZUL_ESC + ';text-transform:uppercase;border-bottom:1px solid ' + AZUL_ESC + ';padding-bottom:2px;margin-bottom:6px;\">1. Resumo Executivo Nacional</div>'\n  + '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border-collapse:collapse;border:1px solid ' + BORDA + ';margin-bottom:12px;font-size:11px;\">'\n  + '<thead><tr style=\"background:#F3F4F6;\">'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:center;\">TOTAL DE INFRAÇÕES</th>'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:center;\">FILIAIS AFETADAS</th>'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:center;\">VEÍCULOS OFENSORES</th>'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:center;\">PICO DE VELOCIDADE REAL</th>'\n  + '</tr></thead>'\n  + '<tbody><tr>'\n  + '<td style=\"padding:6px;border:1px solid ' + BORDA + ';text-align:center;font-weight:bold;color:#991B1B;font-size:13px;\">' + d.totalEventosGeral + ' ocorrências</td>'\n  + '<td style=\"padding:6px;border:1px solid ' + BORDA + ';text-align:center;font-weight:bold;font-size:13px;\">' + d.totalFiliais + ' de 34 filiais</td>'\n  + '<td style=\"padding:6px;border:1px solid ' + BORDA + ';text-align:center;font-weight:bold;font-size:13px;\">' + d.totalVeiculosGeral + ' veículos</td>'\n  + '<td style=\"padding:6px;border:1px solid ' + BORDA + ';text-align:center;font-weight:bold;color:#991B1B;font-size:13px;\">' + Math.round(d.velMaxGeral) + ' km/h (Média: ' + d.velMediaGeral + ' km/h)</td>'\n  + '</tr></tbody></table>'\n  + '<div style=\"font-size:11px;font-weight:bold;color:' + AZUL_ESC + ';text-transform:uppercase;border-bottom:1px solid ' + AZUL_ESC + ';padding-bottom:2px;margin-bottom:6px;\">2. Ranking por Filial Operacional</div>'\n  + '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border-collapse:collapse;border:1px solid ' + BORDA + ';margin-bottom:12px;font-size:11px;\">'\n  + '<thead><tr style=\"background:#F3F4F6;\">'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:left;\">FILIAL OPERACIONAL</th>'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:left;\">REGIONAL (CC)</th>'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:center;\">INFRAÇÕES (%)</th>'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:center;\">VEÍCULOS</th>'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:right;\">PICO</th>'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:right;\">MÉDIA</th>'\n  + '</tr></thead>'\n  + '<tbody>' + rowsFiliais + '</tbody></table>'\n  + '<div style=\"font-size:11px;font-weight:bold;color:' + AZUL_ESC + ';text-transform:uppercase;border-bottom:1px solid ' + AZUL_ESC + ';padding-bottom:2px;margin-bottom:6px;\">3. Top Veículos Mais Ofensores da Frota Nacional</div>'\n  + '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border-collapse:collapse;border:1px solid ' + BORDA + ';margin-bottom:12px;font-size:11px;\">'\n  + '<thead><tr style=\"background:#F3F4F6;\">'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:left;\">PLACA</th>'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:left;\">FILIAL</th>'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:left;\">MODELO</th>'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:left;\">CATEGORIA</th>'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:center;\">RASTREADOR</th>'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:center;\">ALERTAS</th>'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:right;\">PICO</th>'\n  + '<th style=\"padding:5px;border:1px solid ' + BORDA + ';text-align:right;\">MÉDIA</th>'\n  + '</tr></thead>'\n  + '<tbody>' + rowsVeiculos + '</tbody></table>'\n  + '<div style=\"border:1px solid ' + BORDA + ';background:#F9FAFB;padding:8px 10px;font-size:10px;color:#4B5563;border-left:3px solid ' + AZUL_ESC + ';\">'\n  + '<strong>Critérios Técnicos de Governança:</strong><br>'\n  + '• Provedores integrados: 3STEC, NUXEO e OMNILINK.<br>'\n  + '• Filtro corporativo: anomalias e pontos sombra (> 160 km/h) expurgados pelo DW.<br>'\n  + '• Dúvidas e tratativas: <strong>torredecontrole@gritsch.com.br</strong>'\n  + '</div></td></tr></table></body></html>';\n\nreturn [{ json: Object.assign({}, d, { htmlEmail: html, emailDestinoFinal: emailDestino }) }];"
+      },
+      "id": "e1f1a100-0001-4000-8000-000000000010",
+      "name": "08 - Gerar HTML E-mail Consolidado",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        -240,
+        520
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "fromEmail": "naoresponda@gritsch.com.br",
+        "toEmail": "={{ $json.emailDestinoFinal || 'gabriel.brittes@gritsch.com.br' }}",
+        "subject": "=[TESTE DE LAYOUT] Painel Consolidado de Telemetria & Velocidade — Diretoria Nacional | {{ $json.dataRef }}",
+        "html": "={{ $json.htmlEmail }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "e1f1a100-0001-4000-8000-000000000011",
+      "name": "09 - Enviar E-mail Teste Consolidado",
+      "type": "n8n-nodes-base.emailSend",
+      "position": [
+        0,
+        520
+      ],
+      "typeVersion": 2.1,
+      "credentials": {
+        "smtp": {
+          "id": "PQ487x2sKWu1B4l2",
+          "name": "Email - naoresponda@gritsch.com.br"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "00 - Disparo Manual de Teste": {
+      "main": [
+        [
+          {
+            "node": "00_Config_Teste",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "00_Config_Teste": {
+      "main": [
+        [
+          {
+            "node": "01 - Calcular Periodo das Datas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "01 - Calcular Periodo das Datas": {
+      "main": [
+        [
+          {
+            "node": "02 - PG Buscar Eventos Saneados (DW)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "02 - PG Buscar Eventos Saneados (DW)": {
+      "main": [
+        [
+          {
+            "node": "03 - Agrupar Estatisticas por Filial",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "03 - Agrupar Estatisticas por Filial": {
+      "main": [
+        [
+          {
+            "node": "04 - Selecionar Filial Configurada no Teste",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "07 - Consolidar Geral Diretoria",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "04 - Selecionar Filial Configurada no Teste": {
+      "main": [
+        [
+          {
+            "node": "05 - Gerar HTML E-mail Filial (GOI)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "05 - Gerar HTML E-mail Filial (GOI)": {
+      "main": [
+        [
+          {
+            "node": "06 - Enviar E-mail Teste Filial",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "07 - Consolidar Geral Diretoria": {
+      "main": [
+        [
+          {
+            "node": "08 - Gerar HTML E-mail Consolidado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "08 - Gerar HTML E-mail Consolidado": {
+      "main": [
+        [
+          {
+            "node": "09 - Enviar E-mail Teste Consolidado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

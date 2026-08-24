@@ -1,0 +1,91 @@
+{
+  "name": "GOLD - 18 - MV Suspeitos Mensal",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-640, 0],
+      "id": "a1b2c3d4-0018-4000-8000-000000000001",
+      "name": "Executar Manualmente"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "15 8 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [-640, 200],
+      "id": "a1b2c3d4-0018-4000-8000-000000000002",
+      "name": "Refresh Diário"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Recria a MV com a definição mais recente\nDROP MATERIALIZED VIEW IF EXISTS torre.gold_mv_suspeitos_mensal CASCADE;\n\nCREATE MATERIALIZED VIEW torre.gold_mv_suspeitos_mensal AS\nSELECT\n  ano_mes,\n  filial_nome,\n  filial_estado,\n  filial_regiao,\n  grupo_veiculo,\n  grupo_combustivel,\n  -- Contagens\n  COUNT(*)                                          AS qtd_transacoes_suspeitas,\n  COUNT(DISTINCT placa)                             AS qtd_veiculos_suspeitos,\n  -- Valores em risco\n  ROUND(SUM(valor)::numeric, 2)                     AS total_valor_suspeito,\n  ROUND(SUM(litragem)::numeric, 3)                  AS total_litros_suspeito,\n  -- Scores\n  ROUND(AVG(score_risco)::numeric, 2)               AS score_medio,\n  MAX(score_risco)                                  AS score_maximo,\n  SUM(score_risco)                                  AS score_total,\n  -- Breakdown por tipo de flag\n  COUNT(*) FILTER (WHERE flag_litragem_alta)        AS qtd_flag_litragem_alta,\n  COUNT(*) FILTER (WHERE flag_intervalo_curto)      AS qtd_flag_intervalo_curto,\n  COUNT(*) FILTER (WHERE flag_preco_alto)           AS qtd_flag_preco_alto,\n  COUNT(*) FILTER (WHERE flag_retorno_mesmo_posto)  AS qtd_flag_retorno_mesmo_posto,\n  COUNT(*) FILTER (WHERE flag_combustivel_errado)   AS qtd_flag_combustivel_errado\nFROM torre.gold_mv_abastecimentos_suspeitos\nWHERE score_risco > 0\nGROUP BY 1, 2, 3, 4, 5, 6\nWITH DATA;\n\nCREATE INDEX idx_mv_suspeitos_mensal_ano_mes\n  ON torre.gold_mv_suspeitos_mensal (ano_mes);\nCREATE INDEX idx_mv_suspeitos_mensal_filial\n  ON torre.gold_mv_suspeitos_mensal (filial_nome);\nCREATE INDEX idx_mv_suspeitos_mensal_grupo_veic\n  ON torre.gold_mv_suspeitos_mensal (grupo_veiculo);\n\nSELECT 'MV gold_mv_suspeitos_mensal criada' AS status;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-400, 100],
+      "id": "a1b2c3d4-0018-4000-8000-000000000010",
+      "name": "Criar MV",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  COUNT(*)                                        AS linhas,\n  COUNT(DISTINCT ano_mes)                         AS meses,\n  MIN(ano_mes)                                    AS primeiro_mes,\n  MAX(ano_mes)                                    AS ultimo_mes,\n  SUM(qtd_transacoes_suspeitas)                   AS total_suspeitos,\n  SUM(qtd_veiculos_suspeitos)                     AS total_veiculos_suspeitos,\n  ROUND(SUM(total_valor_suspeito)::numeric, 2)    AS valor_total_suspeito,\n  ROUND(AVG(score_medio)::numeric, 2)             AS score_medio_geral,\n  SUM(qtd_flag_litragem_alta)                     AS total_flag_litragem,\n  SUM(qtd_flag_intervalo_curto)                   AS total_flag_intervalo,\n  SUM(qtd_flag_preco_alto)                        AS total_flag_preco,\n  SUM(qtd_flag_retorno_mesmo_posto)               AS total_flag_retorno,\n  SUM(qtd_flag_combustivel_errado)                AS total_flag_comb_errado\nFROM torre.gold_mv_suspeitos_mensal\nWHERE ano_mes >= TO_CHAR(CURRENT_DATE - INTERVAL '3 months', 'YYYY-MM');",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-160, 100],
+      "id": "a1b2c3d4-0018-4000-8000-000000000011",
+      "name": "Validar",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Executar Manualmente": {
+      "main": [[{"node": "Criar MV", "type": "main", "index": 0}]]
+    },
+    "Refresh Diário": {
+      "main": [[{"node": "Criar MV", "type": "main", "index": 0}]]
+    },
+    "Criar MV": {
+      "main": [[{"node": "Validar", "type": "main", "index": 0}]]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "a1b2c3d4-0018-4000-8000-000000000000",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fb581638443806838dcc4ad5d9ab57cd83fc9fe2e7f923a0752e9d8321c3faf5"
+  },
+  "id": "GOLD018mvSuspeitosMensal",
+  "tags": [
+    {"name": "gold"},
+    {"name": "torre-de-controle"}
+  ]
+}

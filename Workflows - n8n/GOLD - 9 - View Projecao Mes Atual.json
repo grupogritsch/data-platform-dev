@@ -1,0 +1,71 @@
+{
+  "name": "GOLD - 9 - View Projecao Mes Atual",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-400, 0],
+      "id": "a1b2c3d4-0010-4000-8000-000000000001",
+      "name": "Executar Manualmente"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE OR REPLACE VIEW torre.gold_v_projecao_mes_atual AS\nWITH\n-- Passo 1: total real por dia nos últimos 30 dias (todas filiais somadas)\nrun_rate_diario AS (\n  SELECT\n    data,\n    eh_dia_util,\n    SUM(total_valor_liquido) AS total_dia\n  FROM torre.gold_mv_kpis_combustivel_diario\n  WHERE data >= CURRENT_DATE - INTERVAL '30 days'\n    AND data < CURRENT_DATE\n  GROUP BY data, eh_dia_util\n),\n-- Passo 2: média por tipo de dia (útil vs fim de semana)\nmedia_por_tipo AS (\n  SELECT\n    eh_dia_util,\n    AVG(total_dia) AS media_dia\n  FROM run_rate_diario\n  GROUP BY eh_dia_util\n),\n-- Passo 3: dias restantes no mês corrente (hoje inclusive até fim do mês)\ndias_restantes AS (\n  SELECT\n    CASE WHEN EXTRACT(DOW FROM gs.dt) IN (0, 6) THEN FALSE ELSE TRUE END AS eh_dia_util,\n    COUNT(*) AS qtd_dias\n  FROM generate_series(\n    CURRENT_DATE,\n    DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month - 1 day',\n    INTERVAL '1 day'\n  ) AS gs(dt)\n  GROUP BY 1\n),\n-- Passo 4: total já realizado no mês atual\nrealizado_mes AS (\n  SELECT\n    COALESCE(SUM(total_valor_liquido), 0) AS total_realizado\n  FROM torre.gold_mv_kpis_combustivel_diario\n  WHERE ano_mes = TO_CHAR(CURRENT_DATE, 'YYYY-MM')\n    AND data < CURRENT_DATE\n)\nSELECT\n  TO_CHAR(CURRENT_DATE, 'YYYY-MM')                          AS ano_mes,\n  CURRENT_DATE                                               AS data_referencia,\n  ROUND(rm.total_realizado::numeric, 2)                      AS realizado_ate_hoje,\n  ROUND(SUM(m.media_dia * dr.qtd_dias)::numeric, 2)          AS projecao_restante,\n  ROUND((rm.total_realizado\n       + SUM(m.media_dia * dr.qtd_dias))::numeric, 2)        AS projecao_fechamento,\n  -- Dias restantes detalhados\n  SUM(dr.qtd_dias) FILTER (WHERE dr.eh_dia_util)             AS dias_uteis_restantes,\n  SUM(dr.qtd_dias) FILTER (WHERE NOT dr.eh_dia_util)         AS dias_fds_restantes,\n  ROUND(m_util.media_dia::numeric, 2)                        AS media_dia_util,\n  ROUND(m_fds.media_dia::numeric, 2)                         AS media_dia_fds\nFROM dias_restantes dr\nJOIN media_por_tipo m ON m.eh_dia_util = dr.eh_dia_util\nCROSS JOIN realizado_mes rm\nCROSS JOIN (SELECT media_dia FROM media_por_tipo WHERE eh_dia_util = TRUE)  m_util\nCROSS JOIN (SELECT media_dia FROM media_por_tipo WHERE eh_dia_util = FALSE) m_fds\nGROUP BY rm.total_realizado, m_util.media_dia, m_fds.media_dia;\n\nSELECT 'View gold_v_projecao_mes_atual criada' AS status;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-160, 0],
+      "id": "a1b2c3d4-0010-4000-8000-000000000010",
+      "name": "Criar View",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  ano_mes,\n  data_referencia,\n  realizado_ate_hoje,\n  projecao_restante,\n  projecao_fechamento,\n  dias_uteis_restantes,\n  dias_fds_restantes,\n  media_dia_util,\n  media_dia_fds\nFROM torre.gold_v_projecao_mes_atual;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [80, 0],
+      "id": "a1b2c3d4-0010-4000-8000-000000000011",
+      "name": "Validar",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Executar Manualmente": {
+      "main": [[{"node": "Criar View", "type": "main", "index": 0}]]
+    },
+    "Criar View": {
+      "main": [[{"node": "Validar", "type": "main", "index": 0}]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "a1b2c3d4-0010-4000-8000-000000000000",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fb581638443806838dcc4ad5d9ab57cd83fc9fe2e7f923a0752e9d8321c3faf5"
+  },
+  "id": "GOLD009viewProjecao",
+  "tags": [
+    {"name": "gold"},
+    {"name": "torre-de-controle"}
+  ]
+}

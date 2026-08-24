@@ -1,0 +1,131 @@
+{
+  "name": "GOLD - 16 - MV Comparativo ANP",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -640,
+        0
+      ],
+      "id": "a1b2c3d4-0017-4000-8000-000000000001",
+      "name": "Executar Manualmente"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "15 7 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -640,
+        200
+      ],
+      "id": "a1b2c3d4-0017-4000-8000-000000000002",
+      "name": "Refresh Diário"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- ============================================================\n-- OTIMIZAÇÃO DE ÍNDICES (Garante resposta sub-segundo nas tabelas base)\n-- ============================================================\nCREATE INDEX IF NOT EXISTS idx_raw_anp_data_coleta ON torre.raw_anp_combustiveis (data_coleta);\nCREATE INDEX IF NOT EXISTS idx_raw_anp_lookup ON torre.raw_anp_combustiveis (estado_sigla, municipio);\n-- FIX 24/08/2026: os dois indices abaixo apontavam para\n-- torre.gold_truckpag_combustivel, que e' uma VIEW comum (ver\n-- 'GOLD - 5 - Setup Views TruckPag'). Postgres nao aceita indice em view:\n-- a query abortava AQUI, antes do DROP/CREATE MATERIALIZED VIEW la embaixo,\n-- entao a MV nunca era recriada. Movidos pra tabela base que a view le.\n-- grupo_combustivel saiu do indice composto porque nao existe na base --\n-- vem do LEFT JOIN com torre.gold_dim_grupo_combustivel.\nCREATE INDEX IF NOT EXISTS idx_integration_truckpag_data_transacao ON torre.integration_truckpag_transacoes (data_transacao);\nCREATE INDEX IF NOT EXISTS idx_integration_truckpag_posto ON torre.integration_truckpag_transacoes (uf_posto, cidade_posto);\n\n-- ============================================================\n-- gold_mv_comparativo_anp\n-- Compara o preço/L pago no TruckPag contra o preço de\n-- mercado ANP para o mesmo combustível, semana e localidade.\n--\n-- Granularidade: placa × posto × semana × combustível\n--\n-- Fallback de referência:\n--   1. MUNICIPIO  — mediana ANP da cidade do posto (match exato)\n--   2. VIZINHO    — mediana ANP do município ANP mais próximo\n--                   no mesmo estado (Haversine ≤ 150 km)\n--   3. NACIONAL   — mediana ANP nacional\n--\n-- Fallback temporal: se não houver dados para o mês atual,\n-- busca o mês anterior mais recente disponível de forma estática global.\n--\n-- Requer: torre.ref_municipios_brasil (seed SEED - Municípios)\n-- Normalização: TRANSLATE() remove acentos para join com ref\n-- ============================================================\nDROP MATERIALIZED VIEW IF EXISTS torre.gold_mv_comparativo_anp CASCADE;\n\nCREATE MATERIALIZED VIEW torre.gold_mv_comparativo_anp AS\nWITH\n-- 1. Normalizar produto ANP, CNPJ e estado para sigla 2 letras (materializado)\nanp_base AS MATERIALIZED (\n  SELECT\n    REGEXP_REPLACE(cnpj_revenda, '[^0-9]', '', 'g')  AS cnpj_normalizado,\n    UPPER(TRIM(municipio))                            AS municipio,\n    CASE UPPER(TRIM(estado_sigla))\n      WHEN 'AC' THEN 'AC'  WHEN 'ACRE'                THEN 'AC'\n      WHEN 'AL' THEN 'AL'  WHEN 'ALAGOAS'             THEN 'AL'\n      WHEN 'AP' THEN 'AP'  WHEN 'AMAPA'               THEN 'AP'  WHEN 'AMAPÁ'          THEN 'AP'\n      WHEN 'AM' THEN 'AM'  WHEN 'AMAZONAS'            THEN 'AM'\n      WHEN 'BA' THEN 'BA'  WHEN 'BAHIA'               THEN 'BA'\n      WHEN 'CE' THEN 'CE'  WHEN 'CEARA'               THEN 'CE'  WHEN 'CEARÁ'          THEN 'CE'\n      WHEN 'DF' THEN 'DF'  WHEN 'DISTRITO FEDERAL'    THEN 'DF'\n      WHEN 'ES' THEN 'ES'  WHEN 'ESPIRITO SANTO'      THEN 'ES'  WHEN 'ESPÍRITO SANTO' THEN 'ES'\n      WHEN 'GO' THEN 'GO'  WHEN 'GOIAS'               THEN 'GO'  WHEN 'GOIÁS'          THEN 'GO'\n      WHEN 'MA' THEN 'MA'  WHEN 'MARANHAO'            THEN 'MA'  WHEN 'MARANHÃO'       THEN 'MA'\n      WHEN 'MT' THEN 'MT'  WHEN 'MATO GROSSO'         THEN 'MT'\n      WHEN 'MS' THEN 'MS'  WHEN 'MATO GROSSO DO SUL'  THEN 'MS'\n      WHEN 'MG' THEN 'MG'  WHEN 'MINAS GERAIS'        THEN 'MG'\n      WHEN 'PA' THEN 'PA'  WHEN 'PARA'                THEN 'PA'  WHEN 'PARÁ'           THEN 'PA'\n      WHEN 'PB' THEN 'PB'  WHEN 'PARAIBA'             THEN 'PB'  WHEN 'PARAÍBA'        THEN 'PB'\n      WHEN 'PR' THEN 'PR'  WHEN 'PARANA'              THEN 'PR'  WHEN 'PARANÁ'         THEN 'PR'\n      WHEN 'PE' THEN 'PE'  WHEN 'PERNAMBUCO'          THEN 'PE'\n      WHEN 'PI' THEN 'PI'  WHEN 'PIAUI'               THEN 'PI'  WHEN 'PIAUÍ'          THEN 'PI'\n      WHEN 'RJ' THEN 'RJ'  WHEN 'RIO DE JANEIRO'      THEN 'RJ'\n      WHEN 'RN' THEN 'RN'  WHEN 'RIO GRANDE DO NORTE' THEN 'RN'\n      WHEN 'RS' THEN 'RS'  WHEN 'RIO GRANDE DO SUL'   THEN 'RS'\n      WHEN 'RO' THEN 'RO'  WHEN 'RONDONIA'            THEN 'RO'  WHEN 'RONDÔNIA'       THEN 'RO'\n      WHEN 'RR' THEN 'RR'  WHEN 'RORAIMA'             THEN 'RR'\n      WHEN 'SC' THEN 'SC'  WHEN 'SANTA CATARINA'      THEN 'SC'\n      WHEN 'SP' THEN 'SP'  WHEN 'SAO PAULO'           THEN 'SP'  WHEN 'SÃO PAULO'      THEN 'SP'\n      WHEN 'SE' THEN 'SE'  WHEN 'SERGIPE'             THEN 'SE'\n      WHEN 'TO' THEN 'TO'  WHEN 'TOCANTINS'           THEN 'TO'\n      ELSE UPPER(TRIM(estado_sigla))\n    END                                               AS estado_sigla,\n    TO_CHAR(DATE_TRUNC('month', data_coleta), 'YYYY-MM') AS mes_anp,\n    CASE\n      WHEN LOWER(produto) LIKE '%diesel%'   THEN 'Diesel'\n      WHEN LOWER(produto) LIKE '%gasolina%' THEN 'Gasolina'\n      WHEN LOWER(produto) LIKE '%etanol%'\n        OR LOWER(produto) LIKE '%lcool%'    THEN 'Álcool'\n      WHEN LOWER(produto) LIKE '%gnv%'      THEN 'GNV'\n      ELSE NULL\n    END                                               AS grupo_combustivel,\n    preco_revenda\n  FROM torre.raw_anp_combustiveis\n  WHERE preco_revenda > 0\n    AND preco_revenda < 20\n    AND bandeira IS NOT NULL\n    AND TRIM(bandeira) <> ''\n    -- So posto bandeirado (24/08/2026): a frota abastece em bandeirado,\n    -- entao posto branco nao entra na referencia. LIKE em vez de igualdade\n    -- porque a ANP escreve 'BRANCA'/'BANDEIRA BRANCA' com variacoes.\n    AND UPPER(TRIM(bandeira)) NOT LIKE '%BRANCA%'\n    AND UPPER(TRIM(bandeira)) NOT LIKE '%SEM BANDEIRA%'\n    AND UPPER(TRIM(bandeira)) NOT IN ('OUTRAS', 'OUTROS', 'NAO INFORMADA', 'NÃO INFORMADA', 'N/D', 'ND', '-')\n    AND data_coleta >= '2026-01-01' -- Otimização: processa apenas dados a partir de 2026\n),\n\n-- Determinar o último mês geral disponível na ANP\nanp_max_mes AS MATERIALIZED (\n  SELECT MAX(mes_anp) AS max_mes FROM anp_base\n),\n\n-- 2. Preço ANP mediano por município + mês + combustível\nanp_municipio AS MATERIALIZED (\n  SELECT\n    municipio,\n    estado_sigla,\n    mes_anp,\n    grupo_combustivel,\n    ROUND(\n      PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY preco_revenda)::numeric\n    , 4)             AS preco_mediano,\n    COUNT(*)         AS qtd_postos\n  FROM anp_base\n  WHERE grupo_combustivel IS NOT NULL\n  GROUP BY municipio, estado_sigla, mes_anp, grupo_combustivel\n),\n\n-- 3. Preço ANP mediano nacional + mês + combustível\nanp_nacional AS MATERIALIZED (\n  SELECT\n    mes_anp,\n    grupo_combustivel,\n    ROUND(\n      PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY preco_revenda)::numeric\n    , 4)             AS preco_mediano,\n    COUNT(*)         AS qtd_postos\n  FROM anp_base\n  WHERE grupo_combustivel IS NOT NULL\n  GROUP BY mes_anp, grupo_combustivel\n),\n\n-- 4. Base TruckPag: agrega por placa + posto + semana + combustível\nbase AS MATERIALIZED (\n  SELECT\n    placa,\n    filial_nome,\n    filial_estado,\n    filial_regiao,\n    grupo_veiculo,\n    REGEXP_REPLACE(cnpj_posto, '[^0-9]', '', 'g')  AS cnpj_normalizado,\n    UPPER(TRIM(uf_posto))                           AS uf_posto,\n    UPPER(TRIM(cidade_posto))                       AS cidade_posto,\n    grupo_combustivel,\n    DATE_TRUNC('week', data_transacao)::date        AS semana,\n    COUNT(*)                                        AS qtd_abastecimentos,\n    ROUND(SUM(litragem)::numeric, 2)                AS total_litros,\n    ROUND(SUM(valor_liquido)::numeric, 2)           AS total_valor_liquido,\n    ROUND(SUM(valor_liquido)::numeric / NULLIF(SUM(litragem), 0), 4) AS preco_medio_ponderado\n  FROM torre.gold_truckpag_combustivel\n  WHERE NOT transacao_estornada\n    AND placa_tipo IS NULL\n    AND filial_nome IS NOT NULL\n    AND grupo_combustivel IN ('Diesel', 'Gasolina', 'Álcool', 'GNV')\n    AND litragem > 0\n    AND valor > 0\n    AND data_transacao >= '2026-01-01' -- Otimização: processa apenas dados a partir de 2026\n  GROUP BY\n    placa, filial_nome, filial_estado, filial_regiao, grupo_veiculo,\n    REGEXP_REPLACE(cnpj_posto, '[^0-9]', '', 'g'),\n    UPPER(TRIM(uf_posto)),\n    UPPER(TRIM(cidade_posto)),\n    grupo_combustivel,\n    DATE_TRUNC('week', data_transacao)::date\n),\n\n-- Mapear cada semana para seu mês de referência ANP\nsemana_mes_ref AS MATERIALIZED (\n  SELECT DISTINCT\n    b.semana,\n    LEAST(\n      TO_CHAR(DATE_TRUNC('month', b.semana), 'YYYY-MM'),\n      m.max_mes\n    ) AS mes_ref\n  FROM base b\n  CROSS JOIN anp_max_mes m\n),\n\n-- 5. Municípios ANP com coordenadas (via ref_municipios_brasil)\nnorm_anp AS MATERIALIZED (\n  SELECT\n    am.municipio,\n    am.estado_sigla,\n    am.mes_anp,\n    am.grupo_combustivel,\n    am.preco_mediano,\n    am.qtd_postos,\n    r.latitude,\n    r.longitude\n  FROM anp_municipio am\n  JOIN torre.ref_municipios_brasil r\n    ON  r.uf        = am.estado_sigla\n    AND r.municipio = TRANSLATE(\n      am.municipio,\n      'ÁÀÃÂÄÉÈÊËÍÌÎÏÓÒÕÔÖÚÙÛÜÇ',\n      'AAAAAEEEEIIIIOOOOOUUUUC'\n    )\n),\n\n-- 6. Coordenadas dos postos TruckPag\nnorm_posto AS MATERIALIZED (\n  SELECT DISTINCT\n    b.cidade_posto,\n    b.uf_posto,\n    r.latitude  AS lat_posto,\n    r.longitude AS lon_posto\n  FROM base b\n  JOIN torre.ref_municipios_brasil r\n    ON  r.uf        = b.uf_posto\n    AND r.municipio = TRANSLATE(\n      b.cidade_posto,\n      'ÁÀÃÂÄÉÈÊËÍÌÎÏÓÒÕÔÖÚÙÛÜÇ',\n      'AAAAAEEEEIIIIOOOOOUUUUC'\n    )\n),\n\n-- Filtrar base sem correspondência exata de município para vizinhança\nbase_sem_match AS MATERIALIZED (\n  SELECT b.*, ref.mes_ref\n  FROM base b\n  JOIN semana_mes_ref ref ON ref.semana = b.semana\n  LEFT JOIN anp_municipio am_exact\n    ON  am_exact.municipio        = b.cidade_posto\n    AND am_exact.estado_sigla     = b.uf_posto\n    AND am_exact.mes_anp          = ref.mes_ref\n    AND am_exact.grupo_combustivel = b.grupo_combustivel\n  WHERE am_exact.preco_mediano IS NULL\n),\n\n-- 7. Município ANP mais próximo quando não há match exato (Haversine ≤ 150 km)\nanp_vizinho AS MATERIALIZED (\n  SELECT DISTINCT ON (b.cnpj_normalizado, b.semana, b.grupo_combustivel)\n    b.cnpj_normalizado,\n    b.semana,\n    b.grupo_combustivel,\n    na.municipio                                                        AS municipio_vizinho,\n    na.preco_mediano                                                    AS preco_anp_vizinho,\n    na.qtd_postos                                                       AS postos_anp_vizinho,\n    ROUND(\n      (6371.0 * acos(\n        LEAST(1.0,\n          cos(radians(np.lat_posto)) * cos(radians(na.latitude))\n            * cos(radians(na.longitude) - radians(np.lon_posto))\n          + sin(radians(np.lat_posto)) * sin(radians(na.latitude))\n        )\n      ))::numeric\n    , 1)                                                                AS distancia_km\n  FROM base_sem_match b\n  JOIN norm_posto np\n    ON  np.cidade_posto = b.cidade_posto\n    AND np.uf_posto     = b.uf_posto\n  JOIN norm_anp na\n    ON  na.estado_sigla      = b.uf_posto\n    AND na.mes_anp           = b.mes_ref\n    AND na.grupo_combustivel = b.grupo_combustivel\n  WHERE np.lat_posto IS NOT NULL\n    AND (\n      6371.0 * acos(\n        LEAST(1.0,\n          cos(radians(np.lat_posto)) * cos(radians(na.latitude))\n            * cos(radians(na.longitude) - radians(np.lon_posto))\n          + sin(radians(np.lat_posto)) * sin(radians(na.latitude))\n        )\n      )\n    ) <= 150\n  ORDER BY\n    b.cnpj_normalizado,\n    b.semana,\n    b.grupo_combustivel,\n    (6371.0 * acos(\n      LEAST(1.0,\n        cos(radians(np.lat_posto)) * cos(radians(na.latitude))\n          * cos(radians(na.longitude) - radians(np.lon_posto))\n        + sin(radians(np.lat_posto)) * sin(radians(na.latitude))\n      )\n    )) ASC\n)\nSELECT\n  b.placa,\n  b.filial_nome,\n  b.filial_estado,\n  b.filial_regiao,\n  b.grupo_veiculo,\n  b.cnpj_normalizado                                                   AS cnpj_posto,\n  b.uf_posto,\n  b.cidade_posto                                                       AS municipio_posto,\n  b.grupo_combustivel,\n  b.semana,\n  b.qtd_abastecimentos,\n  b.total_litros,\n  b.total_valor_liquido,\n  b.preco_medio_ponderado,\n  -- Preços ANP por nível disponível\n  am.preco_mediano                                                     AS preco_anp_municipio,\n  am.qtd_postos                                                        AS postos_anp_municipio,\n  av.municipio_vizinho,\n  av.distancia_km                                                      AS distancia_vizinho_km,\n  av.preco_anp_vizinho,\n  av.postos_anp_vizinho,\n  an.preco_mediano                                                     AS preco_anp_nacional,\n  -- Nível de referência efetivamente usado\n  CASE\n    WHEN am.preco_mediano     IS NOT NULL THEN 'MUNICIPIO'\n    WHEN av.preco_anp_vizinho IS NOT NULL THEN 'VIZINHO'\n    WHEN an.preco_mediano     IS NOT NULL THEN 'NACIONAL'\n    ELSE                                       'SEM_REFERENCIA'\n  END                                                                  AS nivel_referencia,\n  -- Município que serviu de referência\n  CASE\n    WHEN am.preco_mediano     IS NOT NULL THEN b.cidade_posto\n    WHEN av.municipio_vizinho IS NOT NULL THEN av.municipio_vizinho\n    ELSE NULL\n  END                                                                  AS municipio_referencia,\n  -- Preço de referência ANP com fallback\n  COALESCE(\n    am.preco_mediano,\n    av.preco_anp_vizinho,\n    an.preco_mediano\n  )                                                                    AS preco_anp_ref,\n  -- Desvio absoluto (R$/L)\n  ROUND(\n    b.preco_medio_ponderado\n    - COALESCE(am.preco_mediano, av.preco_anp_vizinho, an.preco_mediano)\n  , 4)                                                                 AS desvio_abs,\n  -- Desvio percentual\n  ROUND(\n    (b.preco_medio_ponderado\n     - COALESCE(am.preco_mediano, av.preco_anp_vizinho, an.preco_mediano)\n    ) / NULLIF(COALESCE(am.preco_mediano, av.preco_anp_vizinho, an.preco_mediano), 0) * 100\n  , 1)                                                                 AS desvio_pct,\n  -- Custo extra\n  ROUND(\n    b.total_litros\n    * (b.preco_medio_ponderado\n       - COALESCE(am.preco_mediano, av.preco_anp_vizinho, an.preco_mediano))\n  , 2)                                                                 AS custo_extra_vs_anp,\n  -- Status preco\n  CASE\n    WHEN COALESCE(am.preco_mediano, av.preco_anp_vizinho, an.preco_mediano) IS NULL\n      THEN 'SEM_REFERENCIA'\n    WHEN ROUND(\n      (b.preco_medio_ponderado\n       - COALESCE(am.preco_mediano, av.preco_anp_vizinho, an.preco_mediano))\n      / NULLIF(COALESCE(am.preco_mediano, av.preco_anp_vizinho, an.preco_mediano), 0) * 100\n    , 1) >  5  THEN 'MUITO_ACIMA'\n    WHEN ROUND(\n      (b.preco_medio_ponderado\n       - COALESCE(am.preco_mediano, av.preco_anp_vizinho, an.preco_mediano))\n      / NULLIF(COALESCE(am.preco_mediano, av.preco_anp_vizinho, an.preco_mediano), 0) * 100\n    , 1) >  2  THEN 'ACIMA'\n    WHEN ROUND(\n      (b.preco_medio_ponderado\n       - COALESCE(am.preco_mediano, av.preco_anp_vizinho, an.preco_mediano))\n      / NULLIF(COALESCE(am.preco_mediano, av.preco_anp_vizinho, an.preco_mediano), 0) * 100\n    , 1) < -5  THEN 'MUITO_ABAIXO'\n    WHEN ROUND(\n      (b.preco_medio_ponderado\n       - COALESCE(am.preco_mediano, av.preco_anp_vizinho, an.preco_mediano))\n      / NULLIF(COALESCE(am.preco_mediano, av.preco_anp_vizinho, an.preco_mediano), 0) * 100\n    , 1) < -2  THEN 'ABAIXO'\n    ELSE 'NORMAL'\n  END                                                                  AS status_preco\nFROM base b\nJOIN semana_mes_ref ref ON ref.semana = b.semana\nLEFT JOIN anp_municipio am\n  ON  am.municipio         = b.cidade_posto\n  AND am.estado_sigla      = b.uf_posto\n  AND am.mes_anp           = ref.mes_ref\n  AND am.grupo_combustivel = b.grupo_combustivel\nLEFT JOIN anp_vizinho av\n  ON  av.cnpj_normalizado  = b.cnpj_normalizado\n  AND av.semana            = b.semana\n  AND av.grupo_combustivel = b.grupo_combustivel\nLEFT JOIN anp_nacional an\n  ON  an.mes_anp           = ref.mes_ref\n  AND an.grupo_combustivel = b.grupo_combustivel\nWITH DATA;\n\nCREATE INDEX IF NOT EXISTS idx_comp_anp_filial ON torre.gold_mv_comparativo_anp (filial_nome);\nCREATE INDEX IF NOT EXISTS idx_comp_anp_semana ON torre.gold_mv_comparativo_anp (semana);\nCREATE INDEX IF NOT EXISTS idx_comp_anp_posto ON torre.gold_mv_comparativo_anp (cnpj_posto);\nCREATE INDEX IF NOT EXISTS idx_comp_anp_nivel ON torre.gold_mv_comparativo_anp (nivel_referencia);\nCREATE INDEX IF NOT EXISTS idx_comp_anp_desvio ON torre.gold_mv_comparativo_anp (desvio_pct);\nCREATE INDEX IF NOT EXISTS idx_comp_anp_municipio ON torre.gold_mv_comparativo_anp (municipio_posto);\nCREATE INDEX IF NOT EXISTS idx_comp_anp_status ON torre.gold_mv_comparativo_anp (status_preco);\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -400,
+        100
+      ],
+      "id": "a1b2c3d4-0017-4000-8000-000000000010",
+      "name": "Criar MV",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- 1. Resumo geral: cobertura e impacto financeiro\nSELECT\n  COUNT(*)                                                              AS total_linhas,\n  COUNT(DISTINCT cnpj_posto)                                            AS postos_distintos,\n  COUNT(DISTINCT placa)                                                 AS placas_distintas,\n  MIN(semana)                                                           AS semana_mais_antiga,\n  MAX(semana)                                                           AS semana_mais_recente,\n  COUNT(*) FILTER (WHERE nivel_referencia = 'MUNICIPIO')                AS com_ref_municipio,\n  COUNT(*) FILTER (WHERE nivel_referencia = 'VIZINHO')                  AS com_ref_vizinho,\n  COUNT(*) FILTER (WHERE nivel_referencia = 'NACIONAL')                 AS com_ref_nacional,\n  COUNT(*) FILTER (WHERE nivel_referencia = 'SEM_REFERENCIA')           AS sem_referencia,\n  COUNT(*) FILTER (WHERE status_preco = 'MUITO_ACIMA')                  AS status_muito_acima,\n  COUNT(*) FILTER (WHERE status_preco = 'ACIMA')                        AS status_acima,\n  COUNT(*) FILTER (WHERE status_preco = 'NORMAL')                       AS status_normal,\n  COUNT(*) FILTER (WHERE status_preco = 'ABAIXO')                       AS status_abaixo,\n  COUNT(*) FILTER (WHERE status_preco = 'MUITO_ABAIXO')                 AS status_muito_abaixo,\n  ROUND(SUM(total_valor_liquido)::numeric, 2)                           AS total_gasto,\n  ROUND(SUM(custo_extra_vs_anp)::numeric, 2)                            AS custo_extra_total_vs_anp,\n  ROUND(SUM(custo_extra_vs_anp)::numeric / NULLIF(SUM(total_valor_liquido), 0) * 100, 1) AS pct_acima_anp\nFROM torre.gold_mv_comparativo_anp\nWHERE nivel_referencia <> 'SEM_REFERENCIA';\n\n-- 2. Amostra de registros VIZINHO para validar a proximidade\nSELECT\n  municipio_posto,\n  uf_posto,\n  municipio_vizinho,\n  distancia_vizinho_km,\n  postos_anp_vizinho,\n  preco_anp_municipio,\n  preco_anp_vizinho,\n  preco_anp_nacional,\n  nivel_referencia,\n  preco_anp_ref,\n  desvio_pct,\n  status_preco\nFROM torre.gold_mv_comparativo_anp\nWHERE nivel_referencia = 'VIZINHO'\nGROUP BY\n  municipio_posto, uf_posto, municipio_vizinho, distancia_vizinho_km,\n  postos_anp_vizinho, preco_anp_municipio, preco_anp_vizinho,\n  preco_anp_nacional, nivel_referencia, preco_anp_ref, desvio_pct, status_preco\nORDER BY distancia_vizinho_km ASC\nLIMIT 30;\n\n-- 3. Top 20 postos onde mais pagamos acima da ANP (mín. 500L)\nSELECT\n  cnpj_posto,\n  municipio_posto,\n  uf_posto,\n  grupo_combustivel,\n  nivel_referencia,\n  municipio_referencia,\n  distancia_vizinho_km,\n  COUNT(DISTINCT placa)                                                 AS qtd_placas,\n  COUNT(DISTINCT semana)                                                AS qtd_semanas,\n  ROUND(SUM(total_litros)::numeric, 0)                                  AS total_litros,\n  ROUND(AVG(preco_medio_ponderado)::numeric, 4)                         AS preco_medio_ponderado,\n  ROUND(AVG(preco_anp_ref)::numeric, 4)                                 AS preco_anp_ref_medio,\n  ROUND(AVG(desvio_pct)::numeric, 1)                                    AS desvio_pct_medio,\n  ROUND(SUM(custo_extra_vs_anp)::numeric, 2)                            AS custo_extra_total,\n  status_preco\nFROM torre.gold_mv_comparativo_anp\nWHERE nivel_referencia <> 'SEM_REFERENCIA'\n  AND desvio_pct IS NOT NULL\nGROUP BY cnpj_posto, municipio_posto, uf_posto, grupo_combustivel,\n         nivel_referencia, municipio_referencia, distancia_vizinho_km, status_preco\nHAVING SUM(total_litros) >= 500\nORDER BY AVG(desvio_pct) DESC\nLIMIT 20;\n\n-- 4. Evolução semanal: desvio médio vs ANP por combustível (últimas 12 semanas)\nSELECT\n  semana,\n  grupo_combustivel,\n  COUNT(DISTINCT cnpj_posto)                                            AS postos,\n  ROUND(AVG(preco_medio_ponderado)::numeric, 4)                         AS preco_medio_ponderado,\n  ROUND(AVG(preco_anp_ref)::numeric, 4)                                 AS preco_anp_ref,\n  ROUND(AVG(desvio_pct)::numeric, 1)                                    AS desvio_pct_medio,\n  ROUND(SUM(custo_extra_vs_anp)::numeric, 2)                            AS custo_extra_semana\nFROM torre.gold_mv_comparativo_anp\nWHERE nivel_referencia <> 'SEM_REFERENCIA'\n  AND semana >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '12 weeks')::date\nGROUP BY semana, grupo_combustivel\nORDER BY grupo_combustivel, semana;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -160,
+        100
+      ],
+      "id": "a1b2c3d4-0017-4000-8000-000000000011",
+      "name": "Validar",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Executar Manualmente": {
+      "main": [
+        [
+          {
+            "node": "Criar MV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refresh Diário": {
+      "main": [
+        [
+          {
+            "node": "Criar MV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Criar MV": {
+      "main": [
+        [
+          {
+            "node": "Validar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "a1b2c3d4-0017-4000-8000-000000000000",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fb581638443806838dcc4ad5d9ab57cd83fc9fe2e7f923a0752e9d8321c3faf5"
+  },
+  "id": "GOLD016mvComparativoANP",
+  "tags": [
+    {
+      "name": "gold"
+    },
+    {
+      "name": "torre-de-controle"
+    }
+  ]
+}

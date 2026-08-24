@@ -1,0 +1,131 @@
+{
+  "name": "GOLD - 20 - MV Ranking Postos",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -640,
+        0
+      ],
+      "id": "a1b2c3d4-0020-4000-8000-000000000001",
+      "name": "Executar Manualmente"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "45 7 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -640,
+        200
+      ],
+      "id": "a1b2c3d4-0020-4000-8000-000000000002",
+      "name": "Refresh Diário"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Recria a MV com a definição mais recente\nDROP MATERIALIZED VIEW IF EXISTS torre.gold_mv_ranking_postos CASCADE;\n\nCREATE MATERIALIZED VIEW torre.gold_mv_ranking_postos AS\nWITH base AS (\n  SELECT\n    cnpj_posto,\n    razao_social_posto,\n    nome_fantasia_posto,\n    cidade_posto,\n    uf_posto,\n    grupo_combustivel,\n    placa,\n    filial_nome,\n    data,\n    litragem,\n    valor_liquido,\n    CASE WHEN litragem > 0 THEN valor_liquido / litragem END AS preco_unitario\n  FROM torre.gold_truckpag_combustivel\n  WHERE NOT transacao_estornada\n    AND litragem > 0\n    AND cnpj_posto IS NOT NULL\n    AND cnpj_posto <> ''\n    AND grupo_combustivel NOT IN ('Arla', 'Outros')\n),\nagg AS (\n  SELECT\n    cnpj_posto,\n    razao_social_posto,\n    nome_fantasia_posto,\n    cidade_posto,\n    uf_posto,\n    grupo_combustivel,\n    COUNT(*)                                                           AS qtd_abastecimentos,\n    COUNT(DISTINCT placa)                                              AS qtd_veiculos,\n    COUNT(DISTINCT filial_nome)                                        AS qtd_filiais_atendidas,\n    ROUND(SUM(litragem)::numeric, 2)                                   AS total_litros,\n    ROUND(SUM(valor_liquido)::numeric, 2)                              AS total_valor_liquido,\n    ROUND(SUM(valor_liquido) / NULLIF(SUM(litragem), 0)::numeric, 4)  AS preco_medio_ponderado,\n    MAX(data)                                                          AS ultima_data_uso,\n    MIN(data)                                                          AS primeira_data_uso\n  FROM base\n  GROUP BY 1, 2, 3, 4, 5, 6\n),\n-- Referência ANP por cidade (preço real de mercado coletado pela ANP)\nanp_cidade AS (\n  SELECT\n    TRANSLATE(UPPER(TRIM(municipio)), 'ÁÀÃÂÄÉÈÊËÍÌÎÏÓÒÕÔÖÚÙÛÜÇ', 'AAAAAEEEEIIIIOOOOOUUUUC') AS municipio,\n    CASE estado_sigla\n      WHEN 'ACRE' THEN 'AC' WHEN 'ALAGOAS' THEN 'AL' WHEN 'AMAPA' THEN 'AP'\n      WHEN 'AMAZONAS' THEN 'AM' WHEN 'BAHIA' THEN 'BA' WHEN 'CEARA' THEN 'CE'\n      WHEN 'DISTRITO FEDERAL' THEN 'DF' WHEN 'ESPIRITO SANTO' THEN 'ES'\n      WHEN 'GOIAS' THEN 'GO' WHEN 'MARANHAO' THEN 'MA' WHEN 'MATO GROSSO' THEN 'MT'\n      WHEN 'MATO GROSSO DO SUL' THEN 'MS' WHEN 'MINAS GERAIS' THEN 'MG'\n      WHEN 'PARA' THEN 'PA' WHEN 'PARAIBA' THEN 'PB' WHEN 'PARANA' THEN 'PR'\n      WHEN 'PERNAMBUCO' THEN 'PE' WHEN 'PIAUI' THEN 'PI'\n      WHEN 'RIO DE JANEIRO' THEN 'RJ' WHEN 'RIO GRANDE DO NORTE' THEN 'RN'\n      WHEN 'RIO GRANDE DO SUL' THEN 'RS' WHEN 'RONDONIA' THEN 'RO'\n      WHEN 'RORAIMA' THEN 'RR' WHEN 'SANTA CATARINA' THEN 'SC'\n      WHEN 'SAO PAULO' THEN 'SP' WHEN 'SERGIPE' THEN 'SE' WHEN 'TOCANTINS' THEN 'TO'\n    END AS uf,\n    CASE\n      WHEN produto ILIKE 'DIESEL%'   THEN 'Diesel'\n      WHEN produto ILIKE 'GASOLINA%' THEN 'Gasolina'\n      WHEN produto ILIKE 'ETANOL%'   THEN 'Álcool'\n      WHEN produto ILIKE 'GNV%'      THEN 'GNV'\n    END AS grupo_combustivel,\n    ROUND(AVG(preco_revenda)::numeric, 4) AS preco_anp\n  FROM torre.raw_anp_combustiveis\n  WHERE preco_revenda > 0\n    AND produto NOT IN ('GLP')\n    AND bandeira IS NOT NULL\n    AND TRIM(bandeira) <> ''\n    -- So posto bandeirado (24/08/2026): a frota abastece em bandeirado,\n    -- entao posto branco nao entra na referencia. LIKE em vez de igualdade\n    -- porque a ANP escreve 'BRANCA'/'BANDEIRA BRANCA' com variacoes.\n    AND UPPER(TRIM(bandeira)) NOT LIKE '%BRANCA%'\n    AND UPPER(TRIM(bandeira)) NOT LIKE '%SEM BANDEIRA%'\n    AND UPPER(TRIM(bandeira)) NOT IN ('OUTRAS', 'OUTROS', 'NAO INFORMADA', 'NÃO INFORMADA', 'N/D', 'ND', '-')\n  GROUP BY 1, 2, 3\n  HAVING CASE\n    WHEN produto ILIKE 'DIESEL%'   THEN 'Diesel'\n    WHEN produto ILIKE 'GASOLINA%' THEN 'Gasolina'\n    WHEN produto ILIKE 'ETANOL%'   THEN 'Álcool'\n    WHEN produto ILIKE 'GNV%'      THEN 'GNV'\n  END IS NOT NULL\n),\n-- Fallback: média ANP por estado quando cidade não tem cobertura\nanp_estado AS (\n  SELECT uf, grupo_combustivel,\n    ROUND(AVG(preco_anp)::numeric, 4) AS preco_anp\n  FROM anp_cidade\n  GROUP BY 1, 2\n)\nSELECT\n  a.cnpj_posto,\n  a.razao_social_posto,\n  a.nome_fantasia_posto,\n  a.cidade_posto,\n  a.uf_posto,\n  a.grupo_combustivel,\n  a.qtd_abastecimentos,\n  a.qtd_veiculos,\n  a.qtd_filiais_atendidas,\n  a.total_litros,\n  a.total_valor_liquido,\n  a.preco_medio_ponderado,\n  a.ultima_data_uso,\n  a.primeira_data_uso,\n  -- Referência ANP: cidade quando disponível, estado como fallback\n  ROUND(COALESCE(ac.preco_anp, ae.preco_anp)::numeric, 4)               AS preco_referencia_anp,\n  CASE WHEN ac.preco_anp IS NOT NULL THEN 'Cidade' ELSE 'Estado' END    AS nivel_referencia_anp,\n  ROUND((a.preco_medio_ponderado - COALESCE(ac.preco_anp, ae.preco_anp))::numeric, 4) AS desvio_abs,\n  ROUND(\n    CASE WHEN COALESCE(ac.preco_anp, ae.preco_anp) > 0\n    THEN (a.preco_medio_ponderado - COALESCE(ac.preco_anp, ae.preco_anp))\n       / COALESCE(ac.preco_anp, ae.preco_anp) * 100\n    END::numeric, 2\n  )                                                                       AS desvio_pct,\n  ROUND(\n    ((a.preco_medio_ponderado - COALESCE(ac.preco_anp, ae.preco_anp)) * a.total_litros)::numeric, 2\n  )                                                                       AS custo_extra_vs_anp\nFROM agg a\nLEFT JOIN anp_cidade ac\n  ON TRANSLATE(UPPER(TRIM(a.cidade_posto)), 'ÁÀÃÂÄÉÈÊËÍÌÎÏÓÒÕÔÖÚÙÛÜÇ', 'AAAAAEEEEIIIIOOOOOUUUUC') = ac.municipio\n  AND a.uf_posto = ac.uf\n  AND a.grupo_combustivel = ac.grupo_combustivel\nLEFT JOIN anp_estado ae\n  ON a.uf_posto = ae.uf\n  AND a.grupo_combustivel = ae.grupo_combustivel\nWITH DATA;\n\nCREATE INDEX idx_mv_ranking_postos_cnpj\n  ON torre.gold_mv_ranking_postos (cnpj_posto);\nCREATE INDEX idx_mv_ranking_postos_uf_comb\n  ON torre.gold_mv_ranking_postos (uf_posto, grupo_combustivel);\nCREATE INDEX idx_mv_ranking_postos_qtd\n  ON torre.gold_mv_ranking_postos (qtd_abastecimentos DESC);\nCREATE INDEX idx_mv_ranking_postos_desvio\n  ON torre.gold_mv_ranking_postos (desvio_pct);\n\nSELECT 'MV gold_mv_ranking_postos criada' AS status;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -400,
+        100
+      ],
+      "id": "a1b2c3d4-0020-4000-8000-000000000010",
+      "name": "Criar MV",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  COUNT(*)                                            AS postos,\n  COUNT(DISTINCT uf_posto)                            AS estados,\n  SUM(qtd_abastecimentos)                             AS total_abastecimentos,\n  ROUND(SUM(total_litros)::numeric, 0)                AS total_litros,\n  ROUND(SUM(total_valor_liquido)::numeric, 2)         AS total_valor,\n  ROUND(AVG(preco_medio_ponderado)::numeric, 4)       AS preco_medio_geral,\n  COUNT(*) FILTER (WHERE desvio_pct > 5)              AS postos_acima_5pct,\n  COUNT(*) FILTER (WHERE desvio_pct < -5)             AS postos_abaixo_5pct\nFROM torre.gold_mv_ranking_postos\nWHERE grupo_combustivel = 'Diesel';\n\n-- Top 5 postos mais utilizados\nSELECT\n  cnpj_posto,\n  COALESCE(NULLIF(nome_fantasia_posto, ''), razao_social_posto) AS posto,\n  cidade_posto,\n  uf_posto,\n  qtd_abastecimentos,\n  ROUND(total_litros::numeric, 0)        AS total_litros,\n  preco_medio_ponderado,\n  desvio_pct\nFROM torre.gold_mv_ranking_postos\nWHERE grupo_combustivel = 'Diesel'\nORDER BY qtd_abastecimentos DESC\nLIMIT 5;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -160,
+        100
+      ],
+      "id": "a1b2c3d4-0020-4000-8000-000000000011",
+      "name": "Validar",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Executar Manualmente": {
+      "main": [
+        [
+          {
+            "node": "Criar MV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refresh Diário": {
+      "main": [
+        [
+          {
+            "node": "Criar MV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Criar MV": {
+      "main": [
+        [
+          {
+            "node": "Validar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "a1b2c3d4-0020-4000-8000-000000000000",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fb581638443806838dcc4ad5d9ab57cd83fc9fe2e7f923a0752e9d8321c3faf5"
+  },
+  "id": "GOLD020mvRankingPostos",
+  "tags": [
+    {
+      "name": "gold"
+    },
+    {
+      "name": "torre-de-controle"
+    }
+  ]
+}

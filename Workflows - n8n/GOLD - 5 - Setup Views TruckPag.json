@@ -1,0 +1,135 @@
+{
+  "name": "GOLD - 5 - Setup Views TruckPag",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -640,
+        0
+      ],
+      "id": "a1b2c3d4-0006-4000-8000-000000000001",
+      "name": "Executar Manualmente"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- ============================================================\n-- gold_dim_placa_excecao\n-- Placas que nunca estarão na Bluefleet (funcionários,\n-- preparação, terceiros). Usada como fallback nas views.\n-- ============================================================\nCREATE TABLE IF NOT EXISTS torre.gold_dim_placa_excecao (\n  placa         TEXT PRIMARY KEY,\n  descricao     TEXT,\n  filial_nome   TEXT,\n  filial_estado CHAR(2),\n  filial_regiao TEXT,\n  grupo_veiculo TEXT,\n  tipo          TEXT NOT NULL CHECK (tipo IN ('FUNCIONARIO','PREPARACAO','TERCEIRO'))\n);\n\nINSERT INTO torre.gold_dim_placa_excecao\n  (placa, descricao, filial_nome, filial_estado, filial_regiao, grupo_veiculo, tipo)\nVALUES\n  ('SER7J11', 'Corolla - Flávio (veículo particular para viagens)',\n   'Gritsch Curitiba', 'PR', 'Sul', 'Leve', 'FUNCIONARIO'),\n  ('GRI1A69', 'Placa fictícia - veículo VM em preparação',\n   NULL, NULL, NULL, 'Bitruck', 'PREPARACAO'),\n  ('TBI2067', 'Placa fictícia - 24.260 em preparação',\n   NULL, NULL, NULL, 'Bitruck', 'PREPARACAO'),\n  ('TBI2068', 'Placa fictícia - 24.260 em preparação',\n   NULL, NULL, NULL, 'Bitruck', 'PREPARACAO')\nON CONFLICT (placa) DO UPDATE SET\n  descricao     = EXCLUDED.descricao,\n  filial_nome   = EXCLUDED.filial_nome,\n  filial_estado = EXCLUDED.filial_estado,\n  filial_regiao = EXCLUDED.filial_regiao,\n  grupo_veiculo = EXCLUDED.grupo_veiculo,\n  tipo          = EXCLUDED.tipo;\n\nSELECT 'Tabela gold_dim_placa_excecao criada/atualizada' AS status;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -400,
+        0
+      ],
+      "id": "a1b2c3d4-0006-4000-8000-000000000009",
+      "name": "Criar Tabela Exceções",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DROP VIEW IF EXISTS torre.gold_truckpag_combustivel CASCADE;\nDROP VIEW IF EXISTS torre.gold_truckpag_pedagio CASCADE;\n\n-- ============================================================\n-- gold_truckpag_combustivel\n-- Abastecimentos + Estornos, enriquecidos com dimensões Gold\n-- Prioridade grupo_veiculo: dim_veiculo > placa_excecao > classify()\n-- Prioridade filial: dim_filial > placa_excecao > garagem raw\n-- ============================================================\nCREATE OR REPLACE VIEW torre.gold_truckpag_combustivel AS\nSELECT\n  t.transacao,\n  t.data_transacao,\n  DATE(t.data_transacao AT TIME ZONE 'America/Sao_Paulo')          AS data,\n  UPPER(REPLACE(REPLACE(t.placa, '-', ''), ' ', ''))               AS placa,\n  t.hodometro,\n  t.valor,\n  CASE\n    WHEN t.transacao_estornada IS NOT NULL\n     AND t.transacao_estornada NOT IN ('0', '')\n    THEN t.valor * -1\n    ELSE t.valor\n  END                                                               AS valor_liquido,\n  CASE\n    WHEN t.transacao_estornada IS NOT NULL\n     AND t.transacao_estornada NOT IN ('0', '')\n    THEN t.litragem * -1\n    ELSE t.litragem\n  END                                                               AS litragem,\n  ROUND(t.valor / NULLIF(t.litragem, 0), 4)                        AS preco_unitario,\n  t.cod_combustivel,\n  t.nome_combustivel,\n  COALESCE(gc.grupo_combustivel, 'Outros')                          AS grupo_combustivel,\n  t.tipo_abastecimento,\n  t.razao_social_posto,\n  t.nome_fantasia_posto,\n  t.cnpj_posto,\n  t.cidade_posto,\n  t.uf_posto,\n  t.garagem,\n  COALESCE(f.filial_nome, pe.filial_nome, t.garagem)               AS filial_nome,\n  COALESCE(f.filial_estado, pe.filial_estado)                      AS filial_estado,\n  COALESCE(f.filial_regiao, pe.filial_regiao)                      AS filial_regiao,\n  f.tipo                                                            AS filial_tipo,\n  t.centro_custo,\n  COALESCE(v.grupo_veiculo, pe.grupo_veiculo,\n           torre.gold_classificar_veiculo(t.modelo_veiculo))        AS grupo_veiculo,\n  pe.tipo                                                           AS placa_tipo,\n  t.servico,\n  (t.transacao_estornada IS NOT NULL\n   AND t.transacao_estornada NOT IN ('0', ''))                      AS transacao_estornada,\n  CASE\n    WHEN t.transacao_estornada IS NOT NULL\n     AND t.transacao_estornada NOT IN ('0', '')\n    THEN t.transacao_estornada\n    ELSE NULL\n  END                                                               AS transacao_estornada_ref,\n  t.created_at\nFROM torre.integration_truckpag_transacoes t\nLEFT JOIN torre.gold_dim_grupo_combustivel gc\n  ON LOWER(gc.nome_combustivel) = LOWER(t.nome_combustivel)\nLEFT JOIN torre.gold_dim_filial f\n  ON f.garagem = t.garagem\nLEFT JOIN torre.gold_dim_veiculo v\n  ON UPPER(REPLACE(REPLACE(v.placa, '-', ''), ' ', ''))\n   = UPPER(REPLACE(REPLACE(t.placa, '-', ''), ' ', ''))\nLEFT JOIN torre.gold_dim_placa_excecao pe\n  ON UPPER(REPLACE(REPLACE(pe.placa, '-', ''), ' ', ''))\n   = UPPER(REPLACE(REPLACE(t.placa, '-', ''), ' ', ''))\nWHERE t.servico IN ('ABASTECIMENTO', 'Estorno');\n\n-- ============================================================\n-- gold_truckpag_pedagio\n-- Pedágios enriquecidos com dimensões Gold\n-- Prioridade grupo_veiculo: dim_veiculo > placa_excecao > classify()\n-- Prioridade filial: dim_filial > placa_excecao > garagem raw\n-- ============================================================\nCREATE OR REPLACE VIEW torre.gold_truckpag_pedagio AS\nSELECT\n  t.transacao,\n  t.data_transacao,\n  DATE(t.data_transacao AT TIME ZONE 'America/Sao_Paulo')          AS data,\n  UPPER(REPLACE(REPLACE(t.placa, '-', ''), ' ', ''))               AS placa,\n  t.valor,\n  t.razao_social_posto                                              AS operadora,\n  t.nome_fantasia_posto,\n  t.cidade_posto,\n  t.uf_posto,\n  t.garagem,\n  COALESCE(f.filial_nome, pe.filial_nome, t.garagem)               AS filial_nome,\n  COALESCE(f.filial_estado, pe.filial_estado)                      AS filial_estado,\n  COALESCE(f.filial_regiao, pe.filial_regiao)                      AS filial_regiao,\n  f.tipo                                                            AS filial_tipo,\n  t.centro_custo,\n  COALESCE(v.grupo_veiculo, pe.grupo_veiculo,\n           torre.gold_classificar_veiculo(t.modelo_veiculo))        AS grupo_veiculo,\n  pe.tipo                                                           AS placa_tipo,\n  t.created_at\nFROM torre.integration_truckpag_transacoes t\nLEFT JOIN torre.gold_dim_filial f\n  ON f.garagem = t.garagem\nLEFT JOIN torre.gold_dim_veiculo v\n  ON UPPER(REPLACE(REPLACE(v.placa, '-', ''), ' ', ''))\n   = UPPER(REPLACE(REPLACE(t.placa, '-', ''), ' ', ''))\nLEFT JOIN torre.gold_dim_placa_excecao pe\n  ON UPPER(REPLACE(REPLACE(pe.placa, '-', ''), ' ', ''))\n   = UPPER(REPLACE(REPLACE(t.placa, '-', ''), ' ', ''))\nWHERE t.servico = 'PEDAGIO';\n\nSELECT 'Views gold_truckpag_combustivel e gold_truckpag_pedagio atualizadas' AS status;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -160,
+        0
+      ],
+      "id": "a1b2c3d4-0006-4000-8000-000000000010",
+      "name": "Criar Views",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Cobertura geral\nSELECT\n  'combustivel' AS view,\n  COUNT(*) AS total,\n  SUM(CASE WHEN transacao_estornada THEN 1 ELSE 0 END) AS estornos,\n  SUM(CASE WHEN filial_nome = garagem THEN 1 ELSE 0 END) AS sem_filial,\n  SUM(CASE WHEN placa_tipo IS NOT NULL THEN 1 ELSE 0 END) AS excecoes\nFROM torre.gold_truckpag_combustivel\nUNION ALL\nSELECT\n  'pedagio',\n  COUNT(*),\n  NULL,\n  SUM(CASE WHEN filial_nome = garagem THEN 1 ELSE 0 END),\n  SUM(CASE WHEN placa_tipo IS NOT NULL THEN 1 ELSE 0 END)\nFROM torre.gold_truckpag_pedagio;\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        80,
+        0
+      ],
+      "id": "a1b2c3d4-0006-4000-8000-000000000011",
+      "name": "Validar",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Executar Manualmente": {
+      "main": [
+        [
+          {
+            "node": "Criar Tabela Exceções",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Criar Tabela Exceções": {
+      "main": [
+        [
+          {
+            "node": "Criar Views",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Criar Views": {
+      "main": [
+        [
+          {
+            "node": "Validar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "a1b2c3d4-0006-4000-8000-000000000000",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fb581638443806838dcc4ad5d9ab57cd83fc9fe2e7f923a0752e9d8321c3faf5"
+  },
+  "id": "GOLD005viewsTruckPag",
+  "tags": [
+    {
+      "name": "gold"
+    },
+    {
+      "name": "setup"
+    },
+    {
+      "name": "torre-de-controle"
+    }
+  ]
+}

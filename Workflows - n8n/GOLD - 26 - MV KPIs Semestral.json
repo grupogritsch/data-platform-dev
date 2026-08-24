@@ -1,0 +1,80 @@
+{
+  "name": "GOLD - 26 - MV KPIs Semestral",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-640, 0],
+      "id": "a1b2c3d4-0026-4000-8000-000000000001",
+      "name": "Executar Manualmente"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "25 6 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [-640, 200],
+      "id": "a1b2c3d4-0026-4000-8000-000000000002",
+      "name": "Refresh Diário"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DROP MATERIALIZED VIEW IF EXISTS torre.gold_mv_kpis_semestral CASCADE;\n\nCREATE MATERIALIZED VIEW torre.gold_mv_kpis_semestral AS\nWITH base AS (\n  SELECT\n    EXTRACT(YEAR FROM data)::int                                          AS ano,\n    CASE WHEN EXTRACT(MONTH FROM data) <= 6 THEN 1 ELSE 2 END            AS semestre,\n    filial_nome, filial_estado, filial_regiao,\n    grupo_combustivel, grupo_veiculo,\n    placa, litragem, valor_liquido\n  FROM torre.gold_truckpag_combustivel\n  WHERE NOT transacao_estornada\n    AND filial_nome IS NOT NULL\n    AND litragem > 0\n)\nSELECT\n  ano::text || '-S' || semestre::text                                     AS ano_semestre,\n  ano,\n  semestre,\n  CASE semestre\n    WHEN 1 THEN '1º Sem/' || ano\n    WHEN 2 THEN '2º Sem/' || ano\n  END                                                                      AS periodo_label,\n  filial_nome,\n  filial_estado,\n  filial_regiao,\n  grupo_combustivel,\n  grupo_veiculo,\n  COUNT(*)                                                                 AS qtd_abastecimentos,\n  COUNT(DISTINCT placa)                                                    AS qtd_veiculos,\n  ROUND(SUM(litragem)::numeric, 2)                                         AS total_litros,\n  ROUND(SUM(valor_liquido)::numeric, 2)                                    AS total_valor_liquido,\n  ROUND(\n    SUM(valor_liquido) / NULLIF(SUM(litragem), 0)::numeric, 4\n  )                                                                        AS preco_medio_ponderado\nFROM base\nGROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9\nWITH DATA;\n\nCREATE INDEX idx_mv_kpis_semestral_ano_semestre ON torre.gold_mv_kpis_semestral (ano_semestre);\nCREATE INDEX idx_mv_kpis_semestral_filial       ON torre.gold_mv_kpis_semestral (filial_nome);\nCREATE INDEX idx_mv_kpis_semestral_grupo_comb   ON torre.gold_mv_kpis_semestral (grupo_combustivel);\n\nSELECT 'MV gold_mv_kpis_semestral criada' AS status;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-400, 100],
+      "id": "a1b2c3d4-0026-4000-8000-000000000010",
+      "name": "Criar MV",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  COUNT(DISTINCT ano_semestre)                        AS semestres,\n  MIN(periodo_label)                                  AS primeiro_semestre,\n  MAX(periodo_label)                                  AS ultimo_semestre,\n  COUNT(DISTINCT filial_nome)                         AS filiais\nFROM torre.gold_mv_kpis_semestral;\n\n-- Comparativo semestral nacional — Diesel\nSELECT\n  ano_semestre,\n  periodo_label,\n  SUM(qtd_abastecimentos)                        AS qtd_abastecimentos,\n  SUM(qtd_veiculos)                              AS qtd_veiculos,\n  ROUND(SUM(total_litros)::numeric, 0)           AS total_litros,\n  ROUND(SUM(total_valor_liquido)::numeric, 2)    AS total_valor,\n  ROUND(\n    SUM(total_valor_liquido) / NULLIF(SUM(total_litros), 0)::numeric, 4\n  )                                              AS preco_medio_ponderado\nFROM torre.gold_mv_kpis_semestral\nWHERE grupo_combustivel = 'Diesel'\nGROUP BY 1, 2\nORDER BY 1;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-160, 100],
+      "id": "a1b2c3d4-0026-4000-8000-000000000011",
+      "name": "Validar",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Executar Manualmente": {"main": [[{"node": "Criar MV", "type": "main", "index": 0}]]},
+    "Refresh Diário":       {"main": [[{"node": "Criar MV", "type": "main", "index": 0}]]},
+    "Criar MV":             {"main": [[{"node": "Validar",  "type": "main", "index": 0}]]}
+  },
+  "active": true,
+  "settings": {"executionOrder": "v1"},
+  "versionId": "a1b2c3d4-0026-4000-8000-000000000000",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fb581638443806838dcc4ad5d9ab57cd83fc9fe2e7f923a0752e9d8321c3faf5"
+  },
+  "id": "GOLD026mvKpisSemestral",
+  "tags": [{"name": "gold"}, {"name": "torre-de-controle"}]
+}

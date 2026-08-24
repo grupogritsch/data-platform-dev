@@ -1,0 +1,131 @@
+{
+  "name": "GOLD - 23 - MV Painel Filial Mensal",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -640,
+        0
+      ],
+      "id": "a1b2c3d4-0023-4000-8000-000000000001",
+      "name": "Executar Manualmente"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 8 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -640,
+        200
+      ],
+      "id": "a1b2c3d4-0023-4000-8000-000000000002",
+      "name": "Refresh Diário"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DROP MATERIALIZED VIEW IF EXISTS torre.gold_mv_painel_filial_mensal CASCADE;\n\nCREATE MATERIALIZED VIEW torre.gold_mv_painel_filial_mensal AS\nWITH comb AS (\n  -- Combustível agregado por filial/mês (remove granularidade de combustível/veículo)\n  SELECT\n    ano_mes, ano, mes,\n    filial_nome, filial_estado, filial_regiao,\n    SUM(qtd_abastecimentos)                                                AS qtd_abastecimentos,\n    ROUND(SUM(total_litros)::numeric, 2)                                   AS total_litros,\n    ROUND(SUM(total_valor_liquido)::numeric, 2)                            AS total_valor_combustivel,\n    ROUND(\n      SUM(total_valor_liquido) / NULLIF(SUM(total_litros), 0)::numeric, 4\n    )                                                                       AS preco_medio_ponderado\n  FROM torre.gold_mv_kpis_combustivel_mensal\n  WHERE filial_nome IS NOT NULL\n  GROUP BY 1, 2, 3, 4, 5, 6\n),\nveic AS (\n  -- Veículos únicos por filial/mês (contagem real via atividade)\n  SELECT ano_mes, filial_nome,\n    COUNT(DISTINCT placa) AS qtd_veiculos\n  FROM torre.gold_mv_atividade_frota_mensal\n  GROUP BY 1, 2\n),\nped AS (\n  -- Pedágio agregado por filial/mês\n  SELECT\n    TO_CHAR(data, 'YYYY-MM') AS ano_mes,\n    filial_nome,\n    COUNT(*)                           AS qtd_passagens,\n    ROUND(SUM(valor)::numeric, 2)      AS total_valor_pedagio\n  FROM torre.gold_truckpag_pedagio\n  WHERE filial_nome IS NOT NULL\n    AND placa_tipo IS NULL\n  GROUP BY 1, 2\n),\nsus AS (\n  -- Suspeitos agregados por filial/mês\n  SELECT ano_mes, filial_nome,\n    SUM(qtd_transacoes_suspeitas)             AS qtd_transacoes_suspeitas,\n    ROUND(SUM(total_valor_suspeito)::numeric, 2) AS total_valor_suspeito\n  FROM torre.gold_mv_suspeitos_mensal\n  GROUP BY 1, 2\n),\nefi AS (\n  -- Eficiência agregada por filial/mês (somente registros com km válido)\n  SELECT ano_mes, filial_nome,\n    ROUND(SUM(total_km)::numeric, 2)                                         AS total_km,\n    ROUND(SUM(total_km) FILTER (WHERE NOT cobertura_parcial) / NULLIF(SUM(total_litros) FILTER (WHERE NOT cobertura_parcial), 0)::numeric, 4)         AS km_litro_medio,\n    ROUND(SUM(total_valor_liquido) FILTER (WHERE NOT cobertura_parcial) / NULLIF(SUM(total_km) FILTER (WHERE NOT cobertura_parcial), 0)::numeric, 4)  AS custo_combustivel_por_km\n  FROM torre.gold_mv_eficiencia_placa_mensal\n  WHERE filial_nome IS NOT NULL\n    AND total_km > 0\n  GROUP BY 1, 2\n)\nSELECT\n  c.ano_mes,\n  c.ano,\n  c.mes,\n  c.filial_nome,\n  c.filial_estado,\n  c.filial_regiao,\n  c.qtd_abastecimentos,\n  COALESCE(v.qtd_veiculos, 0)                                               AS qtd_veiculos,\n  c.total_litros,\n  c.total_valor_combustivel,\n  c.preco_medio_ponderado,\n  COALESCE(p.qtd_passagens, 0)                                              AS qtd_passagens,\n  COALESCE(p.total_valor_pedagio, 0.00)                                     AS total_valor_pedagio,\n  ROUND((c.total_valor_combustivel + COALESCE(p.total_valor_pedagio, 0))::numeric, 2) AS custo_total,\n  e.total_km,\n  e.km_litro_medio,\n  e.custo_combustivel_por_km,\n  ROUND(\n    (c.total_valor_combustivel + COALESCE(p.total_valor_pedagio, 0))\n    / NULLIF(e.total_km, 0)::numeric, 4\n  )                                                                           AS custo_total_por_km,\n  COALESCE(s.qtd_transacoes_suspeitas, 0)                                   AS qtd_transacoes_suspeitas,\n  COALESCE(s.total_valor_suspeito, 0.00)                                    AS total_valor_suspeito,\n  ROUND(\n    CASE WHEN c.total_valor_combustivel > 0\n    THEN COALESCE(s.total_valor_suspeito, 0) / c.total_valor_combustivel * 100\n    END::numeric, 2\n  )                                                                           AS pct_valor_suspeito\nFROM comb c\nLEFT JOIN veic v ON c.filial_nome = v.filial_nome AND c.ano_mes = v.ano_mes\nLEFT JOIN ped  p ON c.filial_nome = p.filial_nome AND c.ano_mes = p.ano_mes\nLEFT JOIN sus  s ON c.filial_nome = s.filial_nome AND c.ano_mes = s.ano_mes\nLEFT JOIN efi  e ON c.filial_nome = e.filial_nome AND c.ano_mes = e.ano_mes\nWITH DATA;\n\nCREATE INDEX idx_mv_painel_filial_ano_mes  ON torre.gold_mv_painel_filial_mensal (ano_mes);\nCREATE INDEX idx_mv_painel_filial_nome     ON torre.gold_mv_painel_filial_mensal (filial_nome);\nCREATE INDEX idx_mv_painel_filial_estado   ON torre.gold_mv_painel_filial_mensal (filial_estado);\nCREATE INDEX idx_mv_painel_filial_regiao   ON torre.gold_mv_painel_filial_mensal (filial_regiao);\n\nSELECT 'MV gold_mv_painel_filial_mensal criada' AS status;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -400,
+        100
+      ],
+      "id": "a1b2c3d4-0023-4000-8000-000000000010",
+      "name": "Criar MV",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  COUNT(*)                                          AS linhas,\n  COUNT(DISTINCT filial_nome)                       AS filiais,\n  COUNT(DISTINCT ano_mes)                           AS meses,\n  ROUND(SUM(total_valor_combustivel)::numeric, 2)   AS total_combustivel,\n  ROUND(SUM(total_valor_pedagio)::numeric, 2)       AS total_pedagio,\n  ROUND(SUM(custo_total)::numeric, 2)               AS custo_total,\n  ROUND(AVG(pct_valor_suspeito) FILTER\n    (WHERE pct_valor_suspeito IS NOT NULL)::numeric, 2) AS pct_suspeito_medio\nFROM torre.gold_mv_painel_filial_mensal\nWHERE ano_mes >= TO_CHAR(CURRENT_DATE - INTERVAL '3 months', 'YYYY-MM');\n\n-- Top filiais por custo total no último mês\nSELECT\n  filial_nome, filial_estado,\n  qtd_veiculos,\n  qtd_abastecimentos,\n  ROUND(total_valor_combustivel::numeric, 2) AS combustivel,\n  ROUND(total_valor_pedagio::numeric, 2)     AS pedagio,\n  ROUND(custo_total::numeric, 2)             AS custo_total,\n  ROUND(custo_total_por_km::numeric, 4)      AS custo_por_km,\n  ROUND(km_litro_medio::numeric, 4)          AS km_litro,\n  pct_valor_suspeito\nFROM torre.gold_mv_painel_filial_mensal\nWHERE ano_mes = TO_CHAR(DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month'), 'YYYY-MM')\nORDER BY custo_total DESC\nLIMIT 10;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -160,
+        100
+      ],
+      "id": "a1b2c3d4-0023-4000-8000-000000000011",
+      "name": "Validar",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Executar Manualmente": {
+      "main": [
+        [
+          {
+            "node": "Criar MV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refresh Diário": {
+      "main": [
+        [
+          {
+            "node": "Criar MV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Criar MV": {
+      "main": [
+        [
+          {
+            "node": "Validar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "a1b2c3d4-0023-4000-8000-000000000000",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fb581638443806838dcc4ad5d9ab57cd83fc9fe2e7f923a0752e9d8321c3faf5"
+  },
+  "id": "GOLD023mvPainelFilialMensal",
+  "tags": [
+    {
+      "name": "gold"
+    },
+    {
+      "name": "torre-de-controle"
+    }
+  ]
+}

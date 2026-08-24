@@ -1,0 +1,798 @@
+{
+  "name": "ANP Combustíveis - Ingestão HTML Scraping",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": [
+                1
+              ],
+              "triggerAtHour": 10
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1328,
+        368
+      ],
+      "id": "1f053f1e-b93e-409d-a3af-bb14b62ec6b8",
+      "name": "Trigger Semanal (Segunda 07h)"
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "modo",
+              "value": "incremental"
+            },
+            {
+              "name": "data_limite",
+              "value": "2025-06-01"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "1227647d-13a6-4920-99f1-560539f0b2b2",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [
+        -1120,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://www.gov.br/anp/pt-br/assuntos/precos-e-defesa-da-concorrencia/precos/levantamento-de-precos-de-combustiveis-ultimas-semanas-pesquisadas",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "5cb9e1c2-ba03-4bf1-8306-ce67b201d7aa",
+      "name": "Baixar HTML da Página",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -896,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const html       = $input.first().json.data;\nconst modo       = $('Config').first().json.modo       || 'incremental';\nconst dataLimite = new Date($('Config').first().json.data_limite || '2025-06-01');\n\n// Extrai todos os links .xlsx da página\nconst regex = /href\\s*=\\s*[\"']([^\"']+\\.xlsx)[\"']/gi;\nlet m; const raw = [];\nwhile ((m = regex.exec(html)) !== null)\n  raw.push(m[1].replace(/&amp;/g, '&'));\n\nconst links = [...new Set(raw)].filter(u => u.toLowerCase().includes('revendas_lpc_'));\nif (links.length === 0) throw new Error('[ANP] Nenhum link revendas_lpc_ encontrado.');\n\nlet targets;\n\nif (modo === 'backfill') {\n  // Pega TODOS os arquivos a partir da data_limite, do mais antigo para o mais novo\n  targets = links\n    .filter(u => {\n      const d = u.match(/(\\d{4})-(\\d{2})-(\\d{2})/);\n      if (!d) return false;\n      return new Date(d[1], d[2]-1, d[3]) >= dataLimite;\n    })\n    .sort(); // crescente = mais antigo primeiro\n  if (targets.length === 0)\n    throw new Error('[ANP] Nenhum arquivo encontrado após filtro de data.');\n} else {\n  // Incremental: apenas o arquivo mais recente\n  targets = [links.sort().reverse()[0]];\n}\n\nconsole.log(`[ANP] Modo: ${modo} | Arquivos a processar: ${targets.length}`);\n\nreturn targets.map(url => ({ json: {\n  file_name  : url.split('/').pop(),\n  url,\n  modo,\n  data_limite: $('Config').first().json.data_limite\n}}));\n"
+      },
+      "id": "98ae97eb-4f6c-4b47-9296-d4f2da4d52f8",
+      "name": "Scrapear Links HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -672,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS torre.raw_anp_combustiveis (\n        id             BIGSERIAL PRIMARY KEY,\n        cnpj_revenda   VARCHAR(20),\n        razao_social   TEXT,\n        nome_fantasia  TEXT,\n        endereco       TEXT,\n        numero         VARCHAR(20),\n        complemento    TEXT,\n        bairro         VARCHAR(150),\n        cep            VARCHAR(20),\n        municipio      VARCHAR(150),\n        estado_sigla   VARCHAR(50),\n        bandeira       VARCHAR(100),\n        produto        VARCHAR(100),\n        unidade_medida VARCHAR(30),\n        preco_revenda  NUMERIC(10,4),\n        data_coleta    DATE,\n        arquivo_origem TEXT,\n        ingested_at    TIMESTAMPTZ DEFAULT NOW()\n    );\n\n    CREATE TABLE IF NOT EXISTS torre.log_anp_arquivos_ingeridos (\n        arquivo      TEXT PRIMARY KEY,\n        total_linhas INT,\n        ingerido_em  TIMESTAMPTZ DEFAULT NOW()\n    );\n\n    SELECT 1 AS ddl_ok;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -448,
+        368
+      ],
+      "id": "523290f8-47ee-4ff8-af87-417446e7d291",
+      "name": "DDL: Criar Tabelas",
+      "executeOnce": true,
+      "credentials": {
+        "postgres": {
+          "id": "UUgroIFDIRoiLLEP",
+          "name": "dw - Torre"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return $('Scrapear Links HTML').all();"
+      },
+      "id": "16c7ab35-91cf-472f-ab34-6983a5354fa5",
+      "name": "Restaurar Itens Pós-DDL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -224,
+        368
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "210dafe7-810e-4a3a-bd8c-083a0aeeb7e1",
+      "name": "Loop de Arquivos",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        0,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COUNT(*) AS total\nFROM torre.log_anp_arquivos_ingeridos\nWHERE arquivo = '{{ $json.file_name }}';",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        304,
+        480
+      ],
+      "id": "320f6d2c-0c75-4b5f-9123-83e3b475e328",
+      "name": "Checar Idempotência",
+      "credentials": {
+        "postgres": {
+          "id": "UUgroIFDIRoiLLEP",
+          "name": "dw - Torre"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "not-ingested",
+              "leftValue": "={{ $json.total }}",
+              "rightValue": "0",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "4e0a0f71-c5e8-43fe-9df6-b5f7b5ea370d",
+      "name": "Já Ingerido?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        528,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Loop de Arquivos').item.json.url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "c1dbb77f-007c-4ecb-9423-35cb4dbf3573",
+      "name": "Baixar Arquivo XLSX",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        752,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nfor (const item of items) {\n  if (!item.binary) continue;\n  const keys = Object.keys(item.binary);\n  if (keys.length > 0 && keys[0] !== 'data') {\n    item.binary['data'] = item.binary[keys[0]];\n    delete item.binary[keys[0]];\n  }\n}\nreturn items;"
+      },
+      "id": "f8702be8-ca79-4759-8632-81b793bc896e",
+      "name": "Normalizar Binary Key",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        976,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "xlsx",
+        "options": {
+          "headerRow": false,
+          "rawData": true
+        }
+      },
+      "id": "9c25c3d6-4dc4-4e9c-aa4e-35713d4c8119",
+      "name": "Parse XLSX",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nif (items.length > 0) {\n  const headers = Object.keys(items[0].json);\n  console.log('[ANP DEBUG] Headers reais do XLSX:', JSON.stringify(headers));\n  console.log('[ANP DEBUG] Primeira linha:', JSON.stringify(items[0].json));\n  console.log('[ANP DEBUG] Total de itens:', items.length);\n} else {\n  console.log('[ANP DEBUG] extractFromFile retornou VAZIO.');\n}\nreturn items; // passa adiante sem modificar"
+      },
+      "id": "085701bf-80d6-4168-a304-8e7195c76d6d",
+      "name": "Debug Headers",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1424,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ─── Metadados do arquivo atual (do loop) ───────────────────────────────────\nconst loopItem   = $('Loop de Arquivos').item.json;\nconst fileName   = loopItem.file_name;\nconst modo       = loopItem.modo       || 'incremental';\nconst dataLimite = new Date(loopItem.data_limite || '2025-06-01');\n\n// ─── Helpers ─────────────────────────────────────────────────────────────────\nconst norm = (s) => String(s||'').trim().toLowerCase()\n  .normalize('NFD').replace(/[\\u0300-\\u036f]/g,'')\n  .replace(/\\s+/g,' ');\n\nconst toISO = (v) => {\n  if (!v && v !== 0) return null;\n  if (typeof v === 'number')\n    return new Date(Math.round((v - 25569) * 864e5)).toISOString().split('T')[0];\n  const s = String(v).trim();\n  if (/^\\d{4}-\\d{2}-\\d{2}/.test(s)) return s.substring(0,10);\n  if (/^\\d{1,2}\\/\\d{1,2}\\/\\d{4}$/.test(s)) {\n    const [d,mo,y] = s.split('/');\n    return `${y}-${mo.padStart(2,'0')}-${d.padStart(2,'0')}`;\n  }\n  return null;\n};\n\nconst toNum = (v) => {\n  if (v === null || v === undefined || v === '') return null;\n  if (typeof v === 'number') return v;\n  const n = parseFloat(String(v).trim().replace(/\\./g,'').replace(',','.'));\n  return isNaN(n) ? null : n;\n};\n\n// ─── Passo 1: extrair array de linhas brutas ─────────────────────────────────\n// rawData:true → cada item chega como { row: [v0, v1, ...] }\nconst allItems = $input.all();\n\nconst rawRows = allItems.map(item => {\n  const obj = item.json;\n  if (Array.isArray(obj.row)) return obj.row;\n  // fallback: chaves numéricas \"0\",\"1\",\"2\"...\n  const numKeys = Object.keys(obj).filter(k => !isNaN(Number(k)));\n  if (numKeys.length > 0)\n    return numKeys.sort((a,b) => Number(a)-Number(b)).map(k => obj[k]);\n  return Object.values(obj);\n});\n\n// ─── Passo 2: detectar linha de header real ───────────────────────────────────\n// Âncora: linha que contém a célula com valor normalizado === 'cnpj'\n// (mais confiável que 'produto' — CNPJ está sempre na coluna A)\nlet headerRowIdx = -1;\nlet headers      = [];\n\nfor (let i = 0; i < rawRows.length; i++) {\n  const row = rawRows[i];\n  if (!Array.isArray(row)) continue;\n  if (row.some(cell => norm(String(cell ?? '')) === 'cnpj')) {\n    headerRowIdx = i;\n    headers      = row.map(cell => norm(String(cell ?? '')));\n    break;\n  }\n}\n\nif (headerRowIdx === -1) {\n  console.error('[ANP] ERRO: linha de header (CNPJ) não encontrada.');\n  console.error('[ANP] Primeiras 12 linhas:', JSON.stringify(rawRows.slice(0,12)));\n  return [];\n}\n\nconsole.log(`[ANP] Header na linha ${headerRowIdx}:`, JSON.stringify(headers));\n\n// ─── Passo 3: mapa de índices pelo nome exato das colunas da ANP ─────────────\n// Estrutura real confirmada pelo usuário:\n// CNPJ | RAZÃO | FANTASIA | ENDEREÇO | NÚMERO | COMPLEMENTO | BAIRRO | CEP |\n// MUNICÍPIO | ESTADO | BANDEIRA | PRODUTO | UNIDADE DE MEDIDA | PREÇO DE REVENDA | DATA DA COLETA\nconst idx = (name) => headers.indexOf(norm(name));\n\nconst I = {\n  cnpj      : idx('cnpj'),\n  razao     : idx('razao'),                  // \"RAZÃO\" → norm → \"razao\"\n  fantasia  : idx('fantasia'),\n  endereco  : idx('endereco'),               // \"ENDEREÇO\" → norm → \"endereco\"\n  numero    : idx('numero'),                 // \"NÚMERO\" → norm → \"numero\"\n  compl     : idx('complemento'),\n  bairro    : idx('bairro'),\n  cep       : idx('cep'),\n  municipio : idx('municipio'),              // \"MUNICÍPIO\" → norm → \"municipio\"\n  estado    : idx('estado'),\n  bandeira  : idx('bandeira'),\n  produto   : idx('produto'),\n  unidade   : idx('unidade de medida'),\n  preco     : idx('preco de revenda'),       // \"PREÇO DE REVENDA\" → norm → \"preco de revenda\"\n  data      : idx('data da coleta'),\n};\n\nconsole.log('[ANP] Índices:', JSON.stringify(I));\n\n// Valida campos obrigatórios\nconst obrigatorios = ['cnpj','produto','preco','data'];\nconst faltando = obrigatorios.filter(k => I[k] === -1);\nif (faltando.length > 0) {\n  console.error('[ANP] ERRO: campos obrigatórios não encontrados:', faltando);\n  console.error('[ANP] Headers normalizados encontrados:', JSON.stringify(headers));\n  return [];\n}\n\n// ─── Passo 4: processar linhas de dados ───────────────────────────────────────\nconst cel = (row, i) => (i >= 0 && row[i] !== undefined && row[i] !== null) ? row[i] : null;\nconst str = (row, i) => { const v = cel(row, i); return v !== null ? String(v).trim() : null; };\n\nconst result = [];\n\nfor (let i = headerRowIdx + 1; i < rawRows.length; i++) {\n  const row = rawRows[i];\n  if (!Array.isArray(row) || row.every(c => c === null || c === '')) continue;\n\n  const isoDate = toISO(cel(row, I.data));\n  if (!isoDate) continue;\n  if (modo === 'backfill' && new Date(isoDate) < dataLimite) continue;\n\n  result.push({ json: {\n    cnpj_revenda   : str(row, I.cnpj),\n    razao_social   : str(row, I.razao),\n    nome_fantasia  : str(row, I.fantasia),\n    endereco       : str(row, I.endereco),\n    numero         : str(row, I.numero),\n    complemento    : str(row, I.compl),\n    bairro         : str(row, I.bairro),\n    cep            : str(row, I.cep),\n    municipio      : str(row, I.municipio),\n    estado_sigla   : str(row, I.estado),\n    bandeira       : str(row, I.bandeira),\n    produto        : str(row, I.produto),\n    unidade_medida : str(row, I.unidade),\n    preco_revenda  : toNum(cel(row, I.preco)),\n    data_coleta    : isoDate,\n    arquivo_origem : fileName\n  }});\n}\n\nconsole.log(`[ANP] ${fileName}: ${rawRows.length - headerRowIdx - 1} linhas → ${result.length} válidas`);\nreturn result;\n"
+      },
+      "id": "1d41dadc-c8f1-4dcb-8b71-473019e1e653",
+      "name": "Normalizar e Filtrar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1648,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "has-rows",
+              "leftValue": "={{ $input.all().length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e29ef696-7849-4b5d-b6cf-2379cdd96ebb",
+      "name": "Tem Dados?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1872,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "schema": "torre",
+        "table": "raw_anp_combustiveis",
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "id"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "cnpj_revenda",
+              "displayName": "cnpj_revenda",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "razao_social",
+              "displayName": "razao_social",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "nome_fantasia",
+              "displayName": "nome_fantasia",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "endereco",
+              "displayName": "endereco",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "numero",
+              "displayName": "numero",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "complemento",
+              "displayName": "complemento",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "bairro",
+              "displayName": "bairro",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "cep",
+              "displayName": "cep",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "municipio",
+              "displayName": "municipio",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "estado_sigla",
+              "displayName": "estado_sigla",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "bandeira",
+              "displayName": "bandeira",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "produto",
+              "displayName": "produto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "unidade_medida",
+              "displayName": "unidade_medida",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "preco_revenda",
+              "displayName": "preco_revenda",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "data_coleta",
+              "displayName": "data_coleta",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "arquivo_origem",
+              "displayName": "arquivo_origem",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "ingested_at",
+              "displayName": "ingested_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "0fd54e86-9a37-4359-82b0-e10a392593d5",
+      "name": "Gravar no DW",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2096,
+        480
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "UUgroIFDIRoiLLEP",
+          "name": "dw - Torre"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "console.log('[ANP] Todos os arquivos processados. Ingestão concluída.');\nreturn [{ json: { status: 'ok' } }];"
+      },
+      "id": "caa8fa7c-a94e-4720-a844-d4c86fb8e46d",
+      "name": "Log Sucesso",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        304,
+        288
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Lê arquivo_origem do primeiro item — todos têm o mesmo valor\nconst fileName    = $input.first().json.arquivo_origem;\nconst totalLinhas = $input.all().length;\nreturn [{ json: { file_name: fileName, total_linhas: totalLinhas } }];\n"
+      },
+      "id": "e49d4d62-1093-4b4c-9cd5-983d1e7d37e1",
+      "name": "Preparar Registro",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2320,
+        480
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO torre.log_anp_arquivos_ingeridos (arquivo, total_linhas)\nVALUES ('{{ $json.file_name }}', {{ $json.total_linhas }})\nON CONFLICT (arquivo) DO NOTHING;\nSELECT 1 AS ok;",
+        "options": {}
+      },
+      "id": "b57d36dd-dc93-49ae-8dbb-eb9f48451079",
+      "name": "Registrar Arquivo Ingerido",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2544,
+        560
+      ],
+      "executeOnce": true,
+      "credentials": {
+        "postgres": {
+          "id": "UUgroIFDIRoiLLEP",
+          "name": "dw - Torre"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Trigger Semanal (Segunda 07h)": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Baixar HTML da Página",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Baixar HTML da Página": {
+      "main": [
+        [
+          {
+            "node": "Scrapear Links HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scrapear Links HTML": {
+      "main": [
+        [
+          {
+            "node": "DDL: Criar Tabelas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DDL: Criar Tabelas": {
+      "main": [
+        [
+          {
+            "node": "Restaurar Itens Pós-DDL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restaurar Itens Pós-DDL": {
+      "main": [
+        [
+          {
+            "node": "Loop de Arquivos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop de Arquivos": {
+      "main": [
+        [
+          {
+            "node": "Log Sucesso",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Checar Idempotência",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Checar Idempotência": {
+      "main": [
+        [
+          {
+            "node": "Já Ingerido?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Já Ingerido?": {
+      "main": [
+        [
+          {
+            "node": "Baixar Arquivo XLSX",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop de Arquivos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Baixar Arquivo XLSX": {
+      "main": [
+        [
+          {
+            "node": "Normalizar Binary Key",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar Binary Key": {
+      "main": [
+        [
+          {
+            "node": "Parse XLSX",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse XLSX": {
+      "main": [
+        [
+          {
+            "node": "Debug Headers",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Debug Headers": {
+      "main": [
+        [
+          {
+            "node": "Normalizar e Filtrar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar e Filtrar": {
+      "main": [
+        [
+          {
+            "node": "Tem Dados?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tem Dados?": {
+      "main": [
+        [
+          {
+            "node": "Gravar no DW",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop de Arquivos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gravar no DW": {
+      "main": [
+        [
+          {
+            "node": "Preparar Registro",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Registro": {
+      "main": [
+        [
+          {
+            "node": "Registrar Arquivo Ingerido",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Registrar Arquivo Ingerido": {
+      "main": [
+        [
+          {
+            "node": "Loop de Arquivos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "2K04ENBN6GUGlQqC",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "483b4bbf-d1a3-4978-acc8-7532bdcc694a",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fb581638443806838dcc4ad5d9ab57cd83fc9fe2e7f923a0752e9d8321c3faf5"
+  },
+  "id": "rInjGeX9myCy68ud",
+  "tags": []
+}

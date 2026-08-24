@@ -1,0 +1,80 @@
+{
+  "name": "GOLD - 24 - MV KPIs Semanal",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-640, 0],
+      "id": "a1b2c3d4-0024-4000-8000-000000000001",
+      "name": "Executar Manualmente"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "15 6 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [-640, 200],
+      "id": "a1b2c3d4-0024-4000-8000-000000000002",
+      "name": "Refresh Diário"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DROP MATERIALIZED VIEW IF EXISTS torre.gold_mv_kpis_semanal CASCADE;\n\nCREATE MATERIALIZED VIEW torre.gold_mv_kpis_semanal AS\nSELECT\n  TO_CHAR(DATE_TRUNC('week', data), 'IYYY-IW')          AS ano_semana,\n  EXTRACT(ISOYEAR FROM data)::int                         AS ano,\n  EXTRACT(WEEK FROM data)::int                            AS numero_semana,\n  DATE_TRUNC('week', data)::date                          AS data_inicio_semana,\n  (DATE_TRUNC('week', data) + INTERVAL '6 days')::date   AS data_fim_semana,\n  filial_nome,\n  filial_estado,\n  filial_regiao,\n  grupo_combustivel,\n  grupo_veiculo,\n  COUNT(*)                                                AS qtd_abastecimentos,\n  COUNT(DISTINCT placa)                                   AS qtd_veiculos,\n  COUNT(DISTINCT cnpj_posto)                              AS qtd_postos_distintos,\n  ROUND(SUM(litragem)::numeric, 2)                        AS total_litros,\n  ROUND(SUM(valor_liquido)::numeric, 2)                   AS total_valor_liquido,\n  ROUND(\n    SUM(valor_liquido) / NULLIF(SUM(litragem), 0)::numeric, 4\n  )                                                       AS preco_medio_ponderado\nFROM torre.gold_truckpag_combustivel\nWHERE NOT transacao_estornada\n  AND filial_nome IS NOT NULL\n  AND litragem > 0\nGROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10\nWITH DATA;\n\nCREATE INDEX idx_mv_kpis_semanal_ano_semana   ON torre.gold_mv_kpis_semanal (ano_semana);\nCREATE INDEX idx_mv_kpis_semanal_filial       ON torre.gold_mv_kpis_semanal (filial_nome);\nCREATE INDEX idx_mv_kpis_semanal_grupo_comb   ON torre.gold_mv_kpis_semanal (grupo_combustivel);\nCREATE INDEX idx_mv_kpis_semanal_data_inicio  ON torre.gold_mv_kpis_semanal (data_inicio_semana);\n\nSELECT 'MV gold_mv_kpis_semanal criada' AS status;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-400, 100],
+      "id": "a1b2c3d4-0024-4000-8000-000000000010",
+      "name": "Criar MV",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  COUNT(DISTINCT ano_semana)                          AS semanas,\n  MIN(data_inicio_semana)                             AS primeira_semana,\n  MAX(data_fim_semana)                                AS ultima_semana,\n  COUNT(DISTINCT filial_nome)                         AS filiais,\n  ROUND(AVG(total_valor_liquido)::numeric, 2)         AS gasto_medio_semanal_por_filial,\n  ROUND(AVG(preco_medio_ponderado)::numeric, 4)       AS preco_medio_geral\nFROM torre.gold_mv_kpis_semanal\nWHERE grupo_combustivel = 'Diesel'\n  AND data_inicio_semana >= CURRENT_DATE - INTERVAL '8 weeks';\n\n-- Últimas 4 semanas: evolução nacional de Diesel\nSELECT\n  ano_semana,\n  data_inicio_semana,\n  data_fim_semana,\n  SUM(qtd_abastecimentos)                        AS qtd_abastecimentos,\n  SUM(qtd_veiculos)                              AS qtd_veiculos,\n  ROUND(SUM(total_litros)::numeric, 0)           AS total_litros,\n  ROUND(SUM(total_valor_liquido)::numeric, 2)    AS total_valor,\n  ROUND(AVG(preco_medio_ponderado)::numeric, 4)  AS preco_medio\nFROM torre.gold_mv_kpis_semanal\nWHERE grupo_combustivel = 'Diesel'\n  AND data_inicio_semana >= CURRENT_DATE - INTERVAL '4 weeks'\nGROUP BY 1, 2, 3\nORDER BY 1;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-160, 100],
+      "id": "a1b2c3d4-0024-4000-8000-000000000011",
+      "name": "Validar",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Executar Manualmente": {"main": [[{"node": "Criar MV", "type": "main", "index": 0}]]},
+    "Refresh Diário":       {"main": [[{"node": "Criar MV", "type": "main", "index": 0}]]},
+    "Criar MV":             {"main": [[{"node": "Validar",  "type": "main", "index": 0}]]}
+  },
+  "active": true,
+  "settings": {"executionOrder": "v1"},
+  "versionId": "a1b2c3d4-0024-4000-8000-000000000000",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fb581638443806838dcc4ad5d9ab57cd83fc9fe2e7f923a0752e9d8321c3faf5"
+  },
+  "id": "GOLD024mvKpisSemanal",
+  "tags": [{"name": "gold"}, {"name": "torre-de-controle"}]
+}

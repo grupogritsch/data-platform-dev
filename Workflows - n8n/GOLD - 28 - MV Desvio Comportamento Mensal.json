@@ -1,0 +1,91 @@
+{
+  "name": "GOLD - 28 - MV Desvio Comportamento Mensal",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-640, 0],
+      "id": "a1b2c3d4-0028-4000-8000-000000000001",
+      "name": "Executar Manualmente"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 7 1 * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [-640, 200],
+      "id": "a1b2c3d4-0028-4000-8000-000000000002",
+      "name": "Refresh Mensal"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- ============================================================\n-- gold_mv_desvio_comportamento_mensal\n-- Detecta mudanças de comportamento de abastecimento por placa\n-- Comparação: mês atual vs média dos últimos 3 meses\n-- Flags: VOLUME_ALTO, VOLUME_BAIXO, CIDADE_NOVA, NOTURNO_NOVO, EFICIENCIA_BAIXA\n-- Threshold volume: desvio > 25% vs baseline\n-- Threshold eficiência: queda > 15% no km/L vs baseline (mín 2 meses com dados)\n-- Noturno: 22h-06h horário de Brasília\n-- Depende de: gold_mv_atividade_frota_mensal (para km/L)\n-- ============================================================\nDROP MATERIALIZED VIEW IF EXISTS torre.gold_mv_desvio_comportamento_mensal CASCADE;\n\nCREATE MATERIALIZED VIEW torre.gold_mv_desvio_comportamento_mensal AS\nWITH\n-- Base filtrada: 2026 em diante, sem estornos, sem Arla\nfonte AS (\n  SELECT\n    placa,\n    filial_nome,\n    filial_estado,\n    filial_regiao,\n    grupo_veiculo,\n    data,\n    data_transacao,\n    TO_CHAR(data, 'YYYY-MM')                                                      AS mes,\n    litragem,\n    preco_unitario,\n    cidade_posto,\n    uf_posto,\n    EXTRACT(HOUR FROM (data_transacao AT TIME ZONE 'America/Sao_Paulo'))::int     AS hora_local\n  FROM torre.gold_truckpag_combustivel\n  WHERE NOT transacao_estornada\n    AND placa_tipo IS NULL\n    AND filial_nome IS NOT NULL\n    AND grupo_combustivel NOT IN ('Arla', 'Outros')\n    AND litragem > 0\n    AND data >= '2026-01-01'\n),\n-- Agregação mensal por placa\nmensal AS (\n  SELECT\n    placa,\n    filial_nome,\n    filial_estado,\n    filial_regiao,\n    grupo_veiculo,\n    mes,\n    COUNT(*)                                                              AS qtd_fills,\n    ROUND(SUM(litragem)::numeric, 1)                                      AS total_litros,\n    ROUND(AVG(litragem)::numeric, 1)                                      AS media_litros_fill,\n    ROUND(AVG(preco_unitario)::numeric, 3)                                AS media_preco,\n    COUNT(DISTINCT cidade_posto)                                          AS qtd_cidades,\n    COUNT(*) FILTER (WHERE hora_local >= 22 OR hora_local < 6)           AS fills_noturnos\n  FROM fonte\n  GROUP BY placa, filial_nome, filial_estado, filial_regiao, grupo_veiculo, mes\n),\n-- Baseline de volume: média dos últimos 3 meses completos\nbaseline AS (\n  SELECT\n    placa,\n    ROUND(AVG(qtd_fills)::numeric, 1)          AS baseline_qtd_fills,\n    ROUND(AVG(total_litros)::numeric, 1)       AS baseline_total_litros,\n    ROUND(AVG(media_litros_fill)::numeric, 1)  AS baseline_media_fill,\n    ROUND(AVG(fills_noturnos)::numeric, 1)     AS baseline_fills_noturnos\n  FROM mensal\n  WHERE mes >= TO_CHAR(DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '3 months', 'YYYY-MM')\n    AND mes <  TO_CHAR(DATE_TRUNC('month', CURRENT_DATE), 'YYYY-MM')\n  GROUP BY placa\n  HAVING COUNT(*) >= 2\n),\n-- Cidades visitadas nos últimos 3 meses (referência histórica)\ncidades_historicas AS (\n  SELECT DISTINCT placa, cidade_posto\n  FROM fonte\n  WHERE data >= DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '3 months'\n    AND data <  DATE_TRUNC('month', CURRENT_DATE)\n),\n-- Cidades novas no mês atual (não aparecem no histórico de 3 meses)\ncidades_novas_mes AS (\n  SELECT\n    f.placa,\n    ARRAY_AGG(DISTINCT f.cidade_posto ORDER BY f.cidade_posto) AS cidades_novas\n  FROM fonte f\n  WHERE TO_CHAR(f.data, 'YYYY-MM') = TO_CHAR(CURRENT_DATE, 'YYYY-MM')\n    AND NOT EXISTS (\n      SELECT 1 FROM cidades_historicas ch\n      WHERE ch.placa = f.placa AND ch.cidade_posto = f.cidade_posto\n    )\n  GROUP BY f.placa\n),\n-- Baseline de km/L: média dos últimos 3 meses (mín 2 meses com hodômetro válido)\neficiencia_baseline AS (\n  SELECT\n    placa,\n    ROUND(AVG(km_por_litro)::numeric, 2) AS baseline_km_por_litro\n  FROM torre.gold_mv_atividade_frota_mensal\n  WHERE ano_mes >= TO_CHAR(DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '3 months', 'YYYY-MM')\n    AND ano_mes <  TO_CHAR(DATE_TRUNC('month', CURRENT_DATE), 'YYYY-MM')\n    AND km_por_litro IS NOT NULL\n  GROUP BY placa\n  HAVING COUNT(*) >= 2\n),\n-- km/L do mês atual\neficiencia_atual AS (\n  SELECT placa, km_por_litro AS km_por_litro_atual\n  FROM torre.gold_mv_atividade_frota_mensal\n  WHERE ano_mes = TO_CHAR(CURRENT_DATE, 'YYYY-MM')\n    AND km_por_litro IS NOT NULL\n)\nSELECT\n  m.placa,\n  m.filial_nome,\n  m.filial_estado,\n  m.filial_regiao,\n  m.grupo_veiculo,\n  m.mes,\n  -- Volume\n  b.baseline_total_litros,\n  m.total_litros,\n  ROUND(((m.total_litros / NULLIF(b.baseline_total_litros, 0)) - 1) * 100, 1)    AS desvio_volume_pct,\n  -- Quantidade de abastecimentos\n  b.baseline_qtd_fills,\n  m.qtd_fills,\n  ROUND(((m.qtd_fills / NULLIF(b.baseline_qtd_fills, 0)) - 1) * 100, 1)          AS desvio_fills_pct,\n  -- Média de litros por fill\n  b.baseline_media_fill,\n  m.media_litros_fill,\n  -- Fills noturnos (22h-06h BRT)\n  b.baseline_fills_noturnos,\n  m.fills_noturnos,\n  -- Cidades novas\n  COALESCE(cn.cidades_novas, ARRAY[]::text[])                                     AS cidades_novas,\n  COALESCE(array_length(cn.cidades_novas, 1), 0)                                  AS qtd_cidades_novas,\n  -- Eficiência km/L\n  eb.baseline_km_por_litro,\n  ea.km_por_litro_atual,\n  CASE\n    WHEN eb.baseline_km_por_litro IS NOT NULL AND ea.km_por_litro_atual IS NOT NULL\n    THEN ROUND(((ea.km_por_litro_atual / NULLIF(eb.baseline_km_por_litro, 0)) - 1) * 100, 1)\n    ELSE NULL\n  END                                                                              AS desvio_eficiencia_pct,\n  -- Flags\n  (ABS(((m.total_litros / NULLIF(b.baseline_total_litros, 0)) - 1) * 100) > 25)  AS flag_desvio_volume,\n  (COALESCE(array_length(cn.cidades_novas, 1), 0) > 0)                           AS flag_cidade_nova,\n  (m.fills_noturnos > 0 AND COALESCE(b.baseline_fills_noturnos, 0) = 0)          AS flag_noturno_novo,\n  (ea.km_por_litro_atual IS NOT NULL\n   AND eb.baseline_km_por_litro IS NOT NULL\n   AND ea.km_por_litro_atual < eb.baseline_km_por_litro * 0.85)                  AS flag_eficiencia_baixa,\n  -- Score de desvio (0-4)\n  (\n    CASE WHEN ABS(((m.total_litros / NULLIF(b.baseline_total_litros, 0)) - 1) * 100) > 25 THEN 1 ELSE 0 END\n    + CASE WHEN COALESCE(array_length(cn.cidades_novas, 1), 0) > 0 THEN 1 ELSE 0 END\n    + CASE WHEN m.fills_noturnos > 0 AND COALESCE(b.baseline_fills_noturnos, 0) = 0 THEN 1 ELSE 0 END\n    + CASE WHEN ea.km_por_litro_atual IS NOT NULL AND eb.baseline_km_por_litro IS NOT NULL AND ea.km_por_litro_atual < eb.baseline_km_por_litro * 0.85 THEN 1 ELSE 0 END\n  )                                                                               AS score_desvio,\n  -- Motivos\n  ARRAY_REMOVE(ARRAY[\n    CASE WHEN ABS(((m.total_litros / NULLIF(b.baseline_total_litros, 0)) - 1) * 100) > 25\n      THEN CASE WHEN m.total_litros > b.baseline_total_litros THEN 'VOLUME_ALTO' ELSE 'VOLUME_BAIXO' END\n    END,\n    CASE WHEN COALESCE(array_length(cn.cidades_novas, 1), 0) > 0 THEN 'CIDADE_NOVA' END,\n    CASE WHEN m.fills_noturnos > 0 AND COALESCE(b.baseline_fills_noturnos, 0) = 0 THEN 'NOTURNO_NOVO' END,\n    CASE WHEN ea.km_por_litro_atual IS NOT NULL AND eb.baseline_km_por_litro IS NOT NULL AND ea.km_por_litro_atual < eb.baseline_km_por_litro * 0.85 THEN 'EFICIENCIA_BAIXA' END\n  ], NULL)                                                                        AS motivos\nFROM mensal m\nJOIN baseline b USING (placa)\nLEFT JOIN cidades_novas_mes cn USING (placa)\nLEFT JOIN eficiencia_baseline eb USING (placa)\nLEFT JOIN eficiencia_atual ea USING (placa)\nWHERE m.mes = TO_CHAR(CURRENT_DATE, 'YYYY-MM')\n  AND (\n    ABS(((m.total_litros / NULLIF(b.baseline_total_litros, 0)) - 1) * 100) > 25\n    OR COALESCE(array_length(cn.cidades_novas, 1), 0) > 0\n    OR (m.fills_noturnos > 0 AND COALESCE(b.baseline_fills_noturnos, 0) = 0)\n    OR (ea.km_por_litro_atual IS NOT NULL AND eb.baseline_km_por_litro IS NOT NULL AND ea.km_por_litro_atual < eb.baseline_km_por_litro * 0.85)\n  )\nWITH DATA;\n\nCREATE INDEX idx_comportamento_placa  ON torre.gold_mv_desvio_comportamento_mensal (placa);\nCREATE INDEX idx_comportamento_score  ON torre.gold_mv_desvio_comportamento_mensal (score_desvio DESC);\nCREATE INDEX idx_comportamento_filial ON torre.gold_mv_desvio_comportamento_mensal (filial_nome);\n\nSELECT 'MV gold_mv_desvio_comportamento_mensal criada' AS status;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-400, 100],
+      "id": "a1b2c3d4-0028-4000-8000-000000000010",
+      "name": "Criar MV",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Resumo geral\nSELECT\n  COUNT(*)                                            AS total_placas,\n  COUNT(*) FILTER (WHERE flag_desvio_volume)          AS volume_anomalo,\n  COUNT(*) FILTER (WHERE flag_cidade_nova)            AS cidade_nova,\n  COUNT(*) FILTER (WHERE flag_noturno_novo)           AS noturno_novo,\n  COUNT(*) FILTER (WHERE score_desvio >= 2)           AS score_alto,\n  MIN(desvio_volume_pct)                              AS maior_queda_pct,\n  MAX(desvio_volume_pct)                              AS maior_alta_pct\nFROM torre.gold_mv_desvio_comportamento_mensal;\n\n-- Top desvios ordenados por score e volume\nSELECT\n  placa,\n  filial_nome,\n  grupo_veiculo,\n  mes,\n  baseline_total_litros,\n  total_litros,\n  desvio_volume_pct,\n  qtd_cidades_novas,\n  cidades_novas,\n  baseline_fills_noturnos,\n  fills_noturnos,\n  score_desvio,\n  motivos\nFROM torre.gold_mv_desvio_comportamento_mensal\nORDER BY score_desvio DESC, ABS(desvio_volume_pct) DESC\nLIMIT 30;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-160, 100],
+      "id": "a1b2c3d4-0028-4000-8000-000000000011",
+      "name": "Validar",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Executar Manualmente": {
+      "main": [[{"node": "Criar MV", "type": "main", "index": 0}]]
+    },
+    "Refresh Mensal": {
+      "main": [[{"node": "Criar MV", "type": "main", "index": 0}]]
+    },
+    "Criar MV": {
+      "main": [[{"node": "Validar", "type": "main", "index": 0}]]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "a1b2c3d4-0028-4000-8000-000000000000",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fb581638443806838dcc4ad5d9ab57cd83fc9fe2e7f923a0752e9d8321c3faf5"
+  },
+  "id": "GOLD028mvDesvioComportamentoMensal",
+  "tags": [
+    {"name": "gold"},
+    {"name": "torre-de-controle"}
+  ]
+}

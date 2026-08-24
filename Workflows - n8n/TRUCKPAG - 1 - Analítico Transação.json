@@ -1,0 +1,309 @@
+{
+  "name": "TRUCKPAG - 1 - Analítico Transação",
+  "nodes": [
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.prd.truckpag.com.br/api/integracao-clientes/relatorios/analitico-transacao",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"data_inicial\": \"{{ $now.format('yyyy-MM-dd') }}\",\n  \"data_final\": \"{{ $now.format('yyyy-MM-dd') }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -576,
+        -592
+      ],
+      "id": "10dae2e6-2a70-44a2-9c63-3b23d10b3a5d",
+      "name": "HTTP Request",
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "OPNzq6CAh1kbH3ir",
+          "name": "TRUCKPAG - Token"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extrai todos os registros do array \"data\" dentro do response\nconst rawItems = $input.all();\nconst items = rawItems.flatMap(item => {\n  const data = item.json.data; // <-- aqui, é sempre \"data\"\n  return data.map(record => ({ json: record }));\n});\n\nconst CHUNK_SIZE = 1000;\nconst controlCols = ['inserido', 'atualizado'];\nconst allCols = Object.keys(items[0].json).filter(c => !controlCols.includes(c));\nconst conflictCol = allCols[0]; // transacao_id\nconst tableName = `truckpag_analitico_transacao`;\n\nconst updateSet = allCols\n  .filter(c => c !== conflictCol)\n  .map(c => `\"${c}\" = EXCLUDED.\"${c}\"`)\n  .join(',\\n  ');\n\n// Deduplica globalmente, mantendo a última ocorrência de cada chave\nconst seen = new Map();\nfor (const item of items) {\n  const key = item.json[conflictCol];\n  seen.set(key, item);\n}\nconst dedupedItems = Array.from(seen.values());\n\nconst chunks = [];\nfor (let i = 0; i < dedupedItems.length; i += CHUNK_SIZE) {\n  chunks.push(dedupedItems.slice(i, i + CHUNK_SIZE));\n}\n\nconst result = [];\nfor (const chunk of chunks) {\n  const values = chunk.map(item => {\n    const vals = allCols.map(col => {\n      const v = item.json[col];\n      if (v === null || v === undefined) return 'NULL';\n      if (typeof v === 'number') return v;\n      if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';\n      return `'${String(v).replace(/'/g, \"''\")}'`;\n    });\n    return `(${vals.join(', ')}, NOW(), NULL)`;\n  }).join(',\\n');\n\n  const sql = `\n    INSERT INTO bronze.\"${tableName}\" (\n      ${allCols.map(c => `\"${c}\"`).join(', ')},\n      inserido,\n      atualizado\n    )\n    VALUES ${values}\n    ON CONFLICT (\"${conflictCol}\") DO UPDATE SET\n      ${updateSet},\n      atualizado = NOW();\n  `.trim();\n\n  result.push({ json: { sql } });\n}\n\nreturn result;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -128,
+        -784
+      ],
+      "id": "9faf8685-0a4b-4d61-bc7c-b7518168b98f",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "{{ $json.sql }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        96,
+        -784
+      ],
+      "id": "86f4c32f-5b3b-4c66-be6d-609a57b6b874",
+      "name": "Execute a SQL query",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CALL silver.etl_truckpag_analitico_transacao()",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        320,
+        -784
+      ],
+      "id": "5424d2a5-e0c1-44bd-b379-d4ed4d91ccd9",
+      "name": "Execute a SQL query1",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c33959ee-0663-499c-b8fd-efbde18f04e3",
+              "leftValue": "={{ $input.first().json.data.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -352,
+        -688
+      ],
+      "id": "1a3e52ae-b5ae-4473-92b5-30b94f174137",
+      "name": "If"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        -128,
+        -592
+      ],
+      "id": "a9f40046-58c2-4211-acb6-6e8924bb7382",
+      "name": "No Operation, do nothing"
+    },
+    {
+      "parameters": {
+        "fromEmail": "naoresponda@gritsch.com.br",
+        "toEmail": "cesar@gritsch.com.br",
+        "subject": "Erro API TruckPag",
+        "html": "Erro API TruckPag",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        -352,
+        -496
+      ],
+      "id": "f7ef607a-ddec-47fa-8e57-60bb1f75dc8c",
+      "name": "Send an Email",
+      "webhookId": "995b670d-f809-4da1-9504-3bf4af94e30e",
+      "credentials": {
+        "smtp": {
+          "id": "PQ487x2sKWu1B4l2",
+          "name": "Email - naoresponda@gritsch.com.br"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## API to Silver",
+        "height": 464,
+        "width": 1376
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -880,
+        -800
+      ],
+      "typeVersion": 1,
+      "id": "481aec76-0d52-447d-adfb-3dce99a4e8f5",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "* * * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -800,
+        -592
+      ],
+      "id": "604e1554-3f58-497f-9fd2-99419d401a10",
+      "name": "Schedule Trigger"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send an Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute a SQL query": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute a SQL query1": {
+      "main": [
+        []
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Operation, do nothing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "2K04ENBN6GUGlQqC",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "a05d3be8-cf0e-47a8-bc3f-84a1aeae4ff2",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fb581638443806838dcc4ad5d9ab57cd83fc9fe2e7f923a0752e9d8321c3faf5"
+  },
+  "id": "wMv7kLWW1zPPc37C",
+  "tags": [
+    {
+      "updatedAt": "2026-05-18T19:07:11.512Z",
+      "createdAt": "2026-05-18T19:07:11.512Z",
+      "id": "He69spQHxPVowm5G",
+      "name": "truckpag"
+    },
+    {
+      "updatedAt": "2026-04-24T18:35:08.808Z",
+      "createdAt": "2026-04-24T18:35:08.808Z",
+      "id": "EHG4FqrPM7zG3eYN",
+      "name": "torre-de-controle"
+    }
+  ]
+}

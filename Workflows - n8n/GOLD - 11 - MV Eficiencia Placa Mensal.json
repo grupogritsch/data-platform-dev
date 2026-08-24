@@ -1,0 +1,131 @@
+{
+  "name": "GOLD - 11 - MV Eficiencia Placa Mensal",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -640,
+        0
+      ],
+      "id": "a1b2c3d4-0012-4000-8000-000000000001",
+      "name": "Executar Manualmente"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 6 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -640,
+        200
+      ],
+      "id": "a1b2c3d4-0012-4000-8000-000000000002",
+      "name": "Refresh Diário"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- ============================================================\n-- gold_mv_eficiencia_placa_mensal\n-- KM/L e custo/km por placa por mês — abordagem MIN/MAX.\n--\n-- Abordagem MIN/MAX (substituiu diffs individuais):\n--   km_percorrido = MAX(hodômetro) − MIN(hodômetro) do mês\n--   total_litros  = TODOS os abastecimentos TruckPag do mês\n--   Resultado: km/L reflete o consumo real do mês inteiro,\n--   sem ser afetado por leituras ruins no meio do período.\n--\n-- Regras:\n--   1. Exclui estornos, Arla, placa_tipo (cartões agregadores)\n--   2. Válido: MAX(hod) > MIN(hod) e (MAX−MIN) ≤ 15.000 km\n--   3. Mínimo 100 km no período para base estatística\n--   4. cobertura_parcial: km/L > ref × 1.4 indica combustível\n--      abastecido fora da rede TruckPag no mês\n--   5. cobertura_truckpag_pct: 100.0 = cobertura completa;\n--      valor menor = % estimada capturada (ref ÷ real × 100)\n-- ============================================================\nDROP MATERIALIZED VIEW IF EXISTS torre.gold_mv_eficiencia_placa_mensal CASCADE;\n\nCREATE MATERIALIZED VIEW torre.gold_mv_eficiencia_placa_mensal AS\nWITH\n-- Todos os abastecimentos válidos (sem estorno, sem Arla, sem agregador)\ncombustivel AS (\n  SELECT\n    TO_CHAR(data, 'YYYY-MM')          AS ano_mes,\n    EXTRACT(YEAR  FROM data)::int     AS ano,\n    EXTRACT(MONTH FROM data)::int     AS mes,\n    placa,\n    filial_nome,\n    filial_estado,\n    filial_regiao,\n    grupo_veiculo,\n    litragem,\n    valor_liquido,\n    hodometro\n  FROM torre.gold_truckpag_combustivel\n  WHERE NOT transacao_estornada\n    AND placa_tipo IS NULL\n    AND filial_nome IS NOT NULL\n    AND grupo_combustivel <> 'Arla'\n    AND litragem > 0\n),\n-- Agrega por placa/mês: todos os litros + MIN/MAX de hodômetro\nmensal AS (\n  SELECT\n    ano_mes,\n    ano,\n    mes,\n    placa,\n    filial_nome,\n    filial_estado,\n    filial_regiao,\n    grupo_veiculo,\n    COUNT(*)                                        AS qtd_abastecimentos,\n    COUNT(*) FILTER (WHERE hodometro > 0)           AS qtd_com_hodometro,\n    ROUND(SUM(litragem)::numeric, 1)                AS total_litros,\n    ROUND(SUM(valor_liquido)::numeric, 2)           AS total_valor_liquido,\n    MIN(hodometro) FILTER (WHERE hodometro > 0)     AS hod_min,\n    MAX(hodometro) FILTER (WHERE hodometro > 0)     AS hod_max\n  FROM combustivel\n  GROUP BY ano_mes, ano, mes, placa, filial_nome, filial_estado, filial_regiao, grupo_veiculo\n),\n-- Referência km/L por grupo (usada apenas para detectar cobertura parcial)\nreferencia AS (\n  SELECT\n    unnest(ARRAY['Bitruck','Truck','Toco','3/4','Pesado','Médio','Leve','Moto']) AS grupo_veiculo,\n    unnest(ARRAY[   3.2,    4.5,   5.5,  5.2,   10.0,   11.0,  12.0,  30.0 ]) AS km_litro_ref\n),\n-- Calcula km (MAX − MIN) com validação de sanidade\ncom_km AS (\n  SELECT\n    m.*,\n    r.km_litro_ref,\n    CASE\n      WHEN m.hod_max IS NOT NULL\n       AND m.hod_min IS NOT NULL\n       AND m.hod_max > m.hod_min\n       AND (m.hod_max - m.hod_min) <= 25000\n      THEN (m.hod_max - m.hod_min)\n      ELSE NULL\n    END AS total_km\n  FROM mensal m\n  LEFT JOIN referencia r USING (grupo_veiculo)\n)\nSELECT\n  ano_mes,\n  ano,\n  mes,\n  placa,\n  filial_nome,\n  filial_estado,\n  filial_regiao,\n  grupo_veiculo,\n  km_litro_ref,\n  qtd_abastecimentos,\n  qtd_com_hodometro,\n  total_litros,\n  total_valor_liquido,\n  total_km,\n  -- km/L: km do mês ÷ todos os litros TruckPag do mês\n  ROUND((total_km::numeric / NULLIF(total_litros, 0)), 3)         AS km_litro,\n  -- custo/km: valor total ÷ km do mês\n  ROUND((total_valor_liquido::numeric / NULLIF(total_km, 0)), 4)  AS custo_por_km,\n  -- cobertura_parcial: km/L >40% acima do ref = abastecimento fora da rede\n  (ROUND((total_km::numeric / NULLIF(total_litros, 0)), 3)\n    > km_litro_ref * 1.4)                                         AS cobertura_parcial,\n  -- cobertura_truckpag_pct:\n  --   100.0 = cobertura completa pelo TruckPag\n  --   ex: 69.8 = apenas 69.8% do combustível real passou pelo sistema\n  --   fórmula: referência ÷ km_litro_real × 100\n  CASE\n    WHEN ROUND((total_km::numeric / NULLIF(total_litros, 0)), 3) > km_litro_ref * 1.4\n    THEN ROUND(\n      km_litro_ref\n      / NULLIF(total_km::numeric / NULLIF(total_litros, 0), 0) * 100\n    , 1)\n    ELSE 100.0\n  END                                                             AS cobertura_truckpag_pct\nFROM com_km\nWHERE total_km IS NOT NULL\n  AND total_km >= 100\nWITH DATA;\n\nCREATE INDEX idx_efic_placa_ano_mes\n  ON torre.gold_mv_eficiencia_placa_mensal (ano_mes);\nCREATE INDEX idx_efic_placa_placa\n  ON torre.gold_mv_eficiencia_placa_mensal (placa);\nCREATE INDEX idx_efic_placa_filial\n  ON torre.gold_mv_eficiencia_placa_mensal (filial_nome);\nCREATE INDEX idx_efic_placa_grupo\n  ON torre.gold_mv_eficiencia_placa_mensal (grupo_veiculo);\nCREATE INDEX idx_efic_placa_cobertura\n  ON torre.gold_mv_eficiencia_placa_mensal (cobertura_parcial);\n\nSELECT 'MV gold_mv_eficiencia_placa_mensal atualizada com cobertura TruckPag' AS status;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -400,
+        100
+      ],
+      "id": "a1b2c3d4-0012-4000-8000-000000000010",
+      "name": "Criar MV",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- 1. Totais + resumo de cobertura\nSELECT\n  COUNT(DISTINCT ano_mes)                           AS meses,\n  COUNT(DISTINCT placa)                             AS placas_total,\n  COUNT(DISTINCT placa) FILTER (WHERE cobertura_parcial) AS placas_cobertura_parcial,\n  ROUND(\n    COUNT(DISTINCT placa) FILTER (WHERE cobertura_parcial)::numeric\n    / NULLIF(COUNT(DISTINCT placa), 0) * 100\n  , 1)                                              AS pct_placas_cobertura_parcial,\n  ROUND(SUM(total_km)::numeric, 0)                  AS km_total_historico\nFROM torre.gold_mv_eficiencia_placa_mensal;\n\n-- 2. KM/L por grupo no último mês — apenas cobertura completa\nSELECT\n  grupo_veiculo,\n  km_litro_ref                                      AS km_litro_referencia,\n  COUNT(DISTINCT placa)                             AS placas_total,\n  COUNT(DISTINCT placa) FILTER (WHERE NOT cobertura_parcial) AS placas_cobertura_ok,\n  COUNT(DISTINCT placa) FILTER (WHERE cobertura_parcial)     AS placas_cobertura_parcial,\n  ROUND(\n    SUM(total_km) FILTER (WHERE NOT cobertura_parcial)::numeric\n    / NULLIF(SUM(total_litros) FILTER (WHERE NOT cobertura_parcial), 0)\n  , 3)                                              AS km_litro_ponderado,\n  ROUND(\n    SUM(total_valor_liquido) FILTER (WHERE NOT cobertura_parcial)::numeric\n    / NULLIF(SUM(total_km) FILTER (WHERE NOT cobertura_parcial), 0)\n  , 4)                                              AS custo_km_ponderado\nFROM torre.gold_mv_eficiencia_placa_mensal\nWHERE ano_mes = TO_CHAR(CURRENT_DATE - INTERVAL '1 month', 'YYYY-MM')\nGROUP BY grupo_veiculo, km_litro_ref\nORDER BY SUM(total_km) DESC;\n\n-- 3. Veículos com cobertura parcial no último mês\n-- (abastecimento fora do TruckPag detectado)\nSELECT\n  placa,\n  filial_nome,\n  grupo_veiculo,\n  km_litro_ref                                      AS km_litro_esperado,\n  km_litro                                          AS km_litro_aparente,\n  ROUND(cobertura_truckpag_pct, 1)                  AS cobertura_truckpag_pct,\n  total_km,\n  total_litros,\n  total_valor_liquido\nFROM torre.gold_mv_eficiencia_placa_mensal\nWHERE ano_mes = TO_CHAR(CURRENT_DATE - INTERVAL '1 month', 'YYYY-MM')\n  AND cobertura_parcial = TRUE\nORDER BY cobertura_truckpag_pct ASC;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -160,
+        100
+      ],
+      "id": "a1b2c3d4-0012-4000-8000-000000000011",
+      "name": "Validar",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Executar Manualmente": {
+      "main": [
+        [
+          {
+            "node": "Criar MV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refresh Diário": {
+      "main": [
+        [
+          {
+            "node": "Criar MV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Criar MV": {
+      "main": [
+        [
+          {
+            "node": "Validar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "a1b2c3d4-0012-4000-8000-000000000000",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fb581638443806838dcc4ad5d9ab57cd83fc9fe2e7f923a0752e9d8321c3faf5"
+  },
+  "id": "GOLD011mvEficienciaPlaca",
+  "tags": [
+    {
+      "name": "gold"
+    },
+    {
+      "name": "torre-de-controle"
+    }
+  ]
+}

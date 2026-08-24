@@ -257,8 +257,9 @@ CREATE OR REPLACE VIEW torre.vw_email_destinatarios_filiais AS
 SELECT 
   f.filial_operacional,
   f.email_destino,
+  f.email_cc,
   f.cc_regional,
-  COALESCE(c.valor, 'sandro@gritsch.com.br,torredecontrole@gritsch.com.br,flavio@gritsch.com.br,fabio.pepplow@gritsch.com.br') AS cc_global,
+  COALESCE(c.valor, 'torredecontrole@gritsch.com.br,flavio@gritsch.com.br,fabio.pepplow@gritsch.com.br') AS cc_global,
   f.ativo
 FROM torre.email_gritsch_filiais f
 CROSS JOIN (

@@ -1,0 +1,367 @@
+{
+  "name": "Torre de Controle - Alertas Telemetria SEMANAL v1",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * 1"
+            }
+          ]
+        }
+      },
+      "id": "ff8e4533-d9ac-437f-8398-bcd81a325e38",
+      "name": "00S - Schedule Segunda-Feira",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [
+        -1760,
+        624
+      ],
+      "typeVersion": 1.2
+    },
+    {
+      "parameters": {
+        "jsCode": "var agora = new Date();\nvar dow = agora.getDay();\nvar diasAteSeg = dow === 0 ? 6 : dow - 1;\nvar domSemanaAnt = new Date(agora);\ndomSemanaAnt.setDate(agora.getDate() - diasAteSeg - 1);\nvar segSemanaAnt = new Date(domSemanaAnt);\nsegSemanaAnt.setDate(domSemanaAnt.getDate() - 6);\nvar fmt = function(d) {\n  return String(d.getDate()).padStart(2, '0') + '/' +\n    String(d.getMonth() + 1).padStart(2, '0') + '/' +\n    d.getFullYear();\n};\nvar fmtPG = function(d) {\n  return d.getFullYear() + '-' +\n    String(d.getMonth() + 1).padStart(2, '0') + '-' +\n    String(d.getDate()).padStart(2, '0');\n};\nvar datas = [];\nvar cursor = new Date(segSemanaAnt);\nwhile (cursor <= domSemanaAnt) {\n  datas.push(fmt(cursor));\n  cursor.setDate(cursor.getDate() + 1);\n}\nreturn [{\n  json: {\n    dataRef: fmt(segSemanaAnt) + ' a ' + fmt(domSemanaAnt),\n    datasSemanaBR: datas.map(function(dt) { return \"'\" + dt + \"'\"; }).join(','),\n    semanaInicio: fmtPG(segSemanaAnt),\n    semanaFim: fmtPG(domSemanaAnt)\n  }\n}];\n"
+      },
+      "id": "7c8aeb8d-116c-4d70-a5d6-514b2642a01c",
+      "name": "01S - Calcular Periodo Semanal",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        -1536,
+        624
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH eventos_periodo AS (\n  -- Filtro de ruido (24/08/2026): veiculo com so 1 pico no periodo nao\n  -- \"pontua\" -- precisa de 2 ou mais para aparecer no relatorio. A view\n  -- torre.vw_alertas_telemetria_saneados nao tem janela de tempo propria\n  -- (e o historico completo), entao o limiar so faz sentido calculado\n  -- dentro da janela que este relatorio ja recorta.\n  \n  SELECT \n    e.placa,\n    e.provedor_rastreador,\n    e.velocidade_registrada,\n    e.data_hora_alerta,\n    e.latitude,\n    e.longitude,\n    e.endereco,\n    e.cidade,\n    e.estado,\n    e.nome_evento,\n    e.data_hora_alerta AS data_ref,\n    e.filial_operacional,\n    e.modelo,\n    e.grupo_veiculo,\n    e.situacao_veiculo,\n    count(*) OVER (PARTITION BY e.placa) AS qtd_no_periodo\n  FROM torre.vw_alertas_telemetria_saneados e\n  WHERE e.data_hora_timestamp BETWEEN '{{ $(\"01S - Calcular Periodo Semanal\").first().json.semanaInicio }} 00:00:00'::timestamp \n                                 AND '{{ $(\"01S - Calcular Periodo Semanal\").first().json.semanaFim }} 23:59:59'::timestamp),\neventos AS (\n  SELECT placa, provedor_rastreador, velocidade_registrada, data_hora_alerta,\n         latitude, longitude, endereco, cidade, estado, nome_evento,\n         data_ref, filial_operacional, modelo, grupo_veiculo, situacao_veiculo\n    FROM eventos_periodo\n   WHERE qtd_no_periodo >= 2\n),\nemails AS (\n  SELECT \n    ef.filial_operacional,\n    ef.email_destino,\n    ef.email_cc,\n    ef.cc_regional,\n    COALESCE(cfg.valor, 'torredecontrole@gritsch.com.br,flavio@gritsch.com.br,fabio.pepplow@gritsch.com.br') AS cc_global\n  FROM torre.email_gritsch_filiais ef\n  CROSS JOIN (\n    SELECT valor FROM torre.email_gritsch_config WHERE chave = 'cc_global' LIMIT 1\n  ) cfg\n  WHERE ef.ativo = true\n),\nconsolidado_cfg AS (\n  SELECT \n    COALESCE(MAX(CASE WHEN chave = 'consolidado_destinatarios' THEN valor END), 'jefferson@gritsch.com.br') AS consolidado_destinatarios,\n    COALESCE(MAX(CASE WHEN chave = 'consolidado_cc' THEN valor END), 'sandro@gritsch.com.br,torredecontrole@gritsch.com.br,flavio@gritsch.com.br,fabio.pepplow@gritsch.com.br') AS consolidado_cc\n  FROM torre.email_gritsch_config\n)\nSELECT \n  ev.*,\n  COALESCE(em.email_destino, 'torredecontrole@gritsch.com.br') AS email_destino_db,\n  COALESCE(em.email_cc, '') AS email_cc_db,\n  COALESCE(em.cc_regional, '') AS cc_regional_db,\n  COALESCE(em.cc_global, 'torredecontrole@gritsch.com.br,flavio@gritsch.com.br,fabio.pepplow@gritsch.com.br') AS cc_global_db,\n  ccfg.consolidado_destinatarios AS consolidado_destinatarios_db,\n  ccfg.consolidado_cc AS consolidado_cc_db\nFROM eventos ev\nLEFT JOIN emails em ON em.filial_operacional = ev.filial_operacional\nCROSS JOIN consolidado_cfg ccfg\nORDER BY ev.velocidade_registrada DESC;"
+      },
+      "id": "5d499a78-c3cf-405a-a04b-929cf40972ab",
+      "name": "09S - PG Ler Eventos da Semana",
+      "type": "n8n-nodes-base.postgres",
+      "position": [
+        -1312,
+        624
+      ],
+      "typeVersion": 2.5,
+      "credentials": {
+        "postgres": {
+          "id": "0nuM10NKLuw9hW1i",
+          "name": "DW - Gabriel"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "var items = $input.all();\nvar dataRef = $('01S - Calcular Periodo Semanal').first().json.dataRef || '';\nvar semanaLabel = dataRef;\n\nif (items.length === 0 || (items.length === 1 && items[0].json._semEventos) || !items[0].json.placa) {\n  return [{ json: { _semEventos: true, dataRef: semanaLabel } }];\n}\n\nvar grouped = {};\nfor (var i = 0; i < items.length; i++) {\n  var d = items[i].json;\n  var filial = d.filial_operacional || 'DESCONHECIDA';\n  if (!grouped[filial]) grouped[filial] = [];\n  grouped[filial].push(d);\n}\n\nvar results = [];\nvar filiais = Object.keys(grouped);\nfor (var fi = 0; fi < filiais.length; fi++) {\n  var filial = filiais[fi];\n  var evs = grouped[filial];\n  var total = evs.length;\n  if (total < 5) continue;\n  var vels = evs.map(function(e) { return parseFloat(e.velocidade_registrada) || 0; }).filter(function(v) { return v > 0; });\n  var velMax = vels.length > 0 ? Math.max.apply(null, vels) : 0;\n  var velMedia = vels.length > 0 ? Math.round((vels.reduce(function(s,v){return s+v;},0) / vels.length) * 100) / 100 : 0;\n  var porPlaca = {};\n  for (var ei = 0; ei < evs.length; ei++) {\n    var e = evs[ei];\n    if (!porPlaca[e.placa]) porPlaca[e.placa] = { qtd: 0, velMax: 0, modelo: e.modelo || '', provedor: e.provedor_rastreador || '3STEC' };\n    porPlaca[e.placa].qtd++;\n    var v = parseFloat(e.velocidade_registrada) || 0;\n    if (v > porPlaca[e.placa].velMax) porPlaca[e.placa].velMax = v;\n  }\n  var tabelaPlacas = Object.keys(porPlaca).map(function(p) {\n    return { placa: p, qtd: porPlaca[p].qtd, velMax: porPlaca[p].velMax, modelo: porPlaca[p].modelo, provedor: porPlaca[p].provedor };\n  }).sort(function(a,b){return b.qtd-a.qtd;}).slice(0,15);\n  var topOc = evs.slice().sort(function(a,b){\n    return (parseFloat(b.velocidade_registrada)||0)-(parseFloat(a.velocidade_registrada)||0);\n  }).slice(0,10).map(function(e){\n    return { placa: e.placa, velocidade: e.velocidade_registrada, data: e.data_hora_alerta,\n      local: (e.cidade||'')+(e.estado?'/'+e.estado:''), origem: e.provedor_rastreador || '3STEC' };\n  });\n  var porDia = {};\n  for (var ei2 = 0; ei2 < evs.length; ei2++) {\n    var dt = evs[ei2].data_hora_alerta ? String(evs[ei2].data_hora_alerta).substring(0,10) : 'desconhecido';\n    if (!porDia[dt]) porDia[dt] = 0;\n    porDia[dt]++;\n  }\n  var breakdownDias = Object.keys(porDia).sort().map(function(dia){ return { dia: dia, qtd: porDia[dia] }; });\n  var placaDias = {};\n  for (var ei3 = 0; ei3 < evs.length; ei3++) {\n    var dt2 = evs[ei3].data_hora_alerta ? String(evs[ei3].data_hora_alerta).substring(0,10) : 'desconhecido';\n    if (!placaDias[evs[ei3].placa]) placaDias[evs[ei3].placa] = {};\n    placaDias[evs[ei3].placa][dt2] = true;\n  }\n  var recidivistas = Object.keys(placaDias).filter(function(p){ return Object.keys(placaDias[p]).length >= 3; })\n    .sort(function(a,b){ return Object.keys(placaDias[b]).length - Object.keys(placaDias[a]).length; })\n    .map(function(p){\n      return { placa: p, diasAtivos: Object.keys(placaDias[p]).length,\n        totalAlertas: porPlaca[p] ? porPlaca[p].qtd : 0,\n        velMax: porPlaca[p] ? porPlaca[p].velMax : 0,\n        modelo: porPlaca[p] ? porPlaca[p].modelo : '',\n        provedor: porPlaca[p] ? porPlaca[p].provedor : '3STEC' };\n    });\n  var piorKeys = Object.keys(porPlaca).sort(function(a,b){\n    return porPlaca[b].qtd !== porPlaca[a].qtd ? porPlaca[b].qtd - porPlaca[a].qtd : porPlaca[b].velMax - porPlaca[a].velMax;\n  });\n  var resumo = '';\n  if (piorKeys.length > 0) {\n    var piorPlaca = piorKeys[0];\n    var piorDados = porPlaca[piorPlaca];\n    var evGrave = evs.filter(function(e){ return e.placa === piorPlaca; })\n      .sort(function(a,b){ return (parseFloat(b.velocidade_registrada)||0)-(parseFloat(a.velocidade_registrada)||0); })[0];\n    var local = evGrave ? ((evGrave.endereco ? evGrave.endereco + ', ' : '') + (evGrave.cidade||'') + (evGrave.estado?'/'+evGrave.estado:'')).trim().replace(/^,\\s*/,'') : 'local nao registrado';\n    var nivel = piorDados.velMax >= 120 ? 'CRITICO' : piorDados.velMax >= 100 ? 'ALTO' : 'MODERADO';\n    resumo = nivel + ' - Veiculo ' + piorPlaca + ' (' + piorDados.provedor + ') com ' + piorDados.qtd + ' alerta(s) na semana. Pico de ' + piorDados.velMax + ' km/h' + (local ? ' em ' + local : '') + '.';\n  } else {\n    resumo = 'OK - Nenhum veiculo com padrao critico identificado.';\n  }\n\n  // E-mails centralizados do Banco de Dados (DW)\n  var emailDestinoFinal = evs[0].email_destino_db || 'torredecontrole@gritsch.com.br';\n  var ccParts = [];\n  if (evs[0].email_cc_db) ccParts.push(evs[0].email_cc_db);\n  if (evs[0].cc_regional_db) ccParts.push(evs[0].cc_regional_db);\n  if (evs[0].cc_global_db) ccParts.push(evs[0].cc_global_db);\n  var emailCCFinal = ccParts.join(';').split(/[;,]+/).map(function(s){return s.trim();}).filter(Boolean).filter(function(v,i,a){return a.indexOf(v)===i;}).join(',');\n\n  results.push({ json: {\n    filial: filial, dataRef: semanaLabel, totalEventos: total, velMax: velMax, velMedia: velMedia,\n    tabelaPlacas: tabelaPlacas, topOcorrencias: topOc, breakdownDias: breakdownDias,\n    recidivistas: recidivistas, resumoAnalitico: resumo,\n    emailDestino: emailDestinoFinal, emailCC: emailCCFinal,\n    consolidadoDestinatarios: evs[0].consolidado_destinatarios_db || 'jefferson@gritsch.com.br',\n    consolidadoCC: evs[0].consolidado_cc_db || 'sandro@gritsch.com.br,torredecontrole@gritsch.com.br,flavio@gritsch.com.br,fabio.pepplow@gritsch.com.br'\n  }});\n}\nif (results.length === 0) return [{ json: { _semEventos: true, dataRef: semanaLabel } }];\nreturn results;"
+      },
+      "id": "5272e424-790e-4e45-ab75-f779f5bb2889",
+      "name": "11S - Agrupar por Filial + KPIs",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        -1088,
+        384
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "a43e8e04-846b-4302-90f4-e2eb0ca4eb1a",
+      "name": "12S - Loop Over Filiais",
+      "type": "n8n-nodes-base.splitInBatches",
+      "position": [
+        -864,
+        368
+      ],
+      "typeVersion": 3,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ===========================================================================\n// 13S - Gerar HTML Email Semanal  (identidade visual Grupo Gritsch, v1.0)\n//\n// Mesma paleta e componentes do relatorio diario (\"18 - Gerar HTML Email\").\n// Ver aquele arquivo para o mapeamento secao-a-secao do design system.\n//\n// DUAS SECOES QUE O DIARIO NAO TEM, porque so fazem sentido numa janela de\n// 7 dias: \"Volume por dia\" (barra por dia da semana) e \"Reincidentes\"\n// (placa com alerta em 3 dias ou mais). Os dados ja vem prontos do node\n// 11S em d.breakdownDias / d.recidivistas — so a renderizacao mudou aqui.\n//\n// Filiais com menos de 5 eventos na semana nao chegam a este node (o node\n// 11S descarta antes) — e por isso que o rodape avisa esse filtro.\n// ===========================================================================\n\nconst d = $json;\n\nconst fmtNum = (n) => String(n ?? 0).replace(/\\B(?=(\\d{3})+(?!\\d))/g, '.');\nconst fmtDec = (n) => String(n ?? 0).replace('.', ',');\n\nconst AZUL      = '#213035';\nconst VINHO     = '#8E2E2F';\nconst ALERTA    = '#FA1126';\nconst CRITICO   = '#5A181C';\nconst ATENCAO   = '#E8A33D';\nconst POSITIVO  = '#13880D';\nconst CINZA     = '#4E4D4D';\nconst BORDA     = '#BFBFBF';\nconst REGUA     = '#E2E2E2';\nconst FUNDO     = '#F2F2F2';\nconst BRANCO    = '#FFFFFF';\n\nconst FONTE = \"'Roboto Condensed','Arial Narrow',Arial,sans-serif\";\n\nconst LOGO_ESCURA = 'https://gritsch.com.br/wp-content/uploads/2022/03/logomarca-1_gritsch-1.png';\nconst LOGO_BRANCA = 'https://gritsch.com.br/wp-content/uploads/2023/07/logo_branca1080.png';\n\nconst corVelocidade = (v) => (v >= 140 ? CRITICO : v >= 120 ? ALERTA : ATENCAO);\n\nconst badgeOrigem = (p) => {\n  const prov = p || '3STEC';\n  const cor = prov === '3STEC' ? AZUL : prov === 'OMNILINK' ? CINZA : VINHO;\n  return '<span style=\"display:inline-block;padding:3px 8px;font-size:11px;font-weight:700;'\n       + 'color:' + BRANCO + ';background:' + cor + ';border-radius:4px;'\n       + 'font-family:' + FONTE + '\">' + prov + '</span>';\n};\n\nconst th = (txt, align) =>\n  '<th style=\"padding:10px 12px;text-align:' + (align || 'left') + ';font-size:12px;'\n  + 'font-weight:700;text-transform:uppercase;color:' + BRANCO + ';background:' + VINHO + ';'\n  + 'font-family:' + FONTE + '\">' + txt + '</th>';\n\nconst td = (conteudo, align, cor, peso) =>\n  '<td style=\"padding:10px 12px;border-bottom:1.6px solid ' + REGUA + ';font-size:13px;'\n  + 'text-align:' + (align || 'left') + ';color:' + (cor || CINZA) + ';'\n  + 'font-weight:' + (peso || '400') + ';font-family:' + FONTE + '\">' + conteudo + '</td>';\n\nconst boxKpi = (rotulo, valor, unidade, corNumero) =>\n  '<td width=\"33%\" valign=\"top\" style=\"padding:0 8px\">'\n  + '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:' + BRANCO + ';'\n  + 'border:1.6px solid ' + BORDA + ';border-radius:12px\"><tr><td style=\"padding:14px 20px\">'\n  + '<div style=\"font-size:12px;font-weight:700;text-transform:uppercase;color:' + CINZA + ';'\n  + 'font-family:' + FONTE + '\">' + rotulo + '</div>'\n  + '<div style=\"font-size:26px;font-weight:700;color:' + (corNumero || AZUL) + ';margin-top:4px;'\n  + 'font-family:' + FONTE + '\">' + valor\n  + (unidade ? '<span style=\"font-size:13px;font-weight:400;color:' + CINZA + '\"> ' + unidade + '</span>' : '')\n  + '</div></td></tr></table></td>';\n\nconst faixaSecao = (titulo, corFaixa) =>\n  '<tr><td style=\"padding:26px 32px 0\">'\n  + '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr>'\n  + '<td style=\"background:' + (corFaixa || VINHO) + ';border-radius:10px 10px 0 0;padding:9px 20px;'\n  + 'font-size:14px;font-weight:700;color:' + BRANCO + ';font-family:' + FONTE + '\">'\n  + titulo + '</td></tr></table></td></tr>';\n\nconst tabela = (cabecalhos, linhas) =>\n  '<tr><td style=\"padding:0 32px\">'\n  + '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1.6px solid ' + BORDA + ';'\n  + 'border-top:none;border-radius:0 0 12px 12px;background:' + BRANCO + '\">'\n  + '<tr>' + cabecalhos + '</tr>' + linhas + '</table></td></tr>';\n\n// --- Caixa de resumo (destaque da semana) ----------------------------------\n// O node 11S monta o texto sem emoji (MODERADO/ALTO/CRITICO/OK em texto puro,\n// diferente do diario que ainda usa emoji) — aqui so precisa mapear para cor.\nconst resumoTxt = String(d.resumoAnalitico || '');\nconst ehOk = /^OK/.test(resumoTxt);\nconst nivelResumo = ehOk ? 'Sem padrão crítico'\n  : /CRITICO/.test(resumoTxt) ? 'Crítico'\n  : /ALTO/.test(resumoTxt)    ? 'Alto'\n  : 'Moderado';\nconst corResumo = ehOk ? POSITIVO\n  : /CRITICO/.test(resumoTxt) ? ALERTA\n  : ATENCAO;\nconst corpoResumo = resumoTxt.replace(/^(OK|MODERADO|ALTO|CRITICO)\\s*[-—]\\s*/, '').trim();\n\nconst boxResumo = corpoResumo\n  ? '<tr><td style=\"padding:22px 32px 0\">'\n    + '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:' + FUNDO + ';'\n    + 'border-left:4px solid ' + corResumo + ';border-radius:0 8px 8px 0\">'\n    + '<tr><td style=\"padding:16px 22px\">'\n    + '<div style=\"font-size:11px;font-weight:700;text-transform:uppercase;color:' + CINZA + ';'\n    + 'font-family:' + FONTE + '\">Destaque da semana · ' + nivelResumo + '</div>'\n    + '<div style=\"font-size:14px;color:' + CINZA + ';margin-top:7px;line-height:1.7;'\n    + 'font-family:' + FONTE + '\">' + corpoResumo + '</div>'\n    + '</td></tr></table></td></tr>'\n  : '';\n\n// --- Volume por dia (barra horizontal) -------------------------------------\nconst bd = d.breakdownDias || [];\nlet secDias = '';\nif (bd.length > 0) {\n  const maxQtd = Math.max.apply(null, bd.map(x => x.qtd));\n  let rowsDias = '';\n  for (const linha of bd) {\n    const pct = maxQtd > 0 ? Math.round((linha.qtd / maxQtd) * 100) : 0;\n    const diaFmt = String(linha.dia || '').split('-').reverse().join('/');\n    rowsDias += '<tr>'\n      + '<td style=\"padding:7px 12px;font-size:12px;color:' + CINZA + ';white-space:nowrap;'\n      + 'font-family:' + FONTE + '\">' + diaFmt + '</td>'\n      + '<td style=\"padding:7px 12px;width:100%\">'\n      + '<div style=\"background:' + REGUA + ';border-radius:3px;height:14px;width:100%\">'\n      + '<div style=\"background:' + VINHO + ';border-radius:3px;height:14px;width:' + pct + '%\"></div>'\n      + '</div></td>'\n      + '<td style=\"padding:7px 12px;font-size:12px;color:' + AZUL + ';font-weight:700;text-align:right;'\n      + 'white-space:nowrap;font-family:' + FONTE + '\">' + linha.qtd + '</td>'\n      + '</tr>';\n  }\n  secDias = faixaSecao('Volume por dia', AZUL)\n    + '<tr><td style=\"padding:0 32px\">'\n    + '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1.6px solid ' + BORDA + ';'\n    + 'border-top:none;border-radius:0 0 12px 12px;background:' + BRANCO + ';padding:6px 0\">'\n    + rowsDias + '</table></td></tr>';\n}\n\n// --- Reincidentes (3+ dias na semana) --------------------------------------\nconst recids = d.recidivistas || [];\nlet secRecid = '';\nif (recids.length > 0) {\n  let rowsR = '';\n  for (const r of recids) {\n    rowsR += '<tr>'\n      + td(r.placa, 'left', AZUL, '700')\n      + td(r.modelo || '—', 'left')\n      + td(badgeOrigem(r.provedor), 'center')\n      + td(r.diasAtivos + 'd / ' + r.totalAlertas + 'x', 'center', AZUL, '700')\n      + td(fmtDec(r.velMax) + ' km/h', 'right', corVelocidade(r.velMax), '700')\n      + '</tr>';\n  }\n  secRecid = faixaSecao('Reincidentes · alertas em 3 ou mais dias', CRITICO)\n    + tabela(th('Placa') + th('Modelo') + th('Origem', 'center')\n           + th('Dias / Alertas', 'center') + th('Pico', 'right'), rowsR);\n}\n\n// --- Top 10 e Top 15 (mesmas tabelas do diario) ----------------------------\nlet rowsTop = '';\nfor (const o of (d.topOcorrencias || [])) {\n  const v = o.velocidade || 0;\n  const modelo = (d.tabelaPlacas || []).find(x => x.placa === o.placa)?.modelo || '—';\n  rowsTop += '<tr>'\n    + td(o.placa, 'left', AZUL, '700')\n    + td(modelo, 'left')\n    + td(badgeOrigem(o.origem), 'center')\n    + td(fmtDec(v) + ' km/h', 'right', corVelocidade(v), '700')\n    + td(o.data || '—', 'left')\n    + td(o.local || o.cidade || '—', 'left')\n    + '</tr>';\n}\n\nlet rowsPlacas = '';\nfor (const p of (d.tabelaPlacas || [])) {\n  const v = p.velMax || 0;\n  rowsPlacas += '<tr>'\n    + td(p.placa, 'left', AZUL, '700')\n    + td(p.modelo || '—', 'left')\n    + td(badgeOrigem(p.provedor), 'center')\n    + td(fmtNum(p.qtd), 'center')\n    + td(fmtDec(v) + ' km/h', 'right', corVelocidade(v), '700')\n    + '</tr>';\n}\n\n// --- Documento --------------------------------------------------------------\nconst html = '<!DOCTYPE html><html lang=\"pt-BR\"><head><meta charset=\"UTF-8\">'\n+ '<meta name=\"viewport\" content=\"width=device-width,initial-scale=1.0\">'\n+ '<link href=\"https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@400;600;700&display=swap\" rel=\"stylesheet\">'\n+ '</head><body style=\"margin:0;padding:0;background:' + FUNDO + ';font-family:' + FONTE + '\">'\n\n+ '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:' + FUNDO + ';padding:28px 0\">'\n+ '<tr><td align=\"center\">'\n+ '<table width=\"700\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:700px;width:100%;'\n+ 'background:' + BRANCO + ';border:1.6px solid ' + BORDA + ';border-radius:12px\">'\n\n+ '<tr><td style=\"padding:24px 32px 18px;border-bottom:3px solid ' + VINHO + '\">'\n+ '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr>'\n+ '<td valign=\"middle\" width=\"140\" style=\"padding-right:22px\">'\n+ '<img src=\"' + LOGO_ESCURA + '\" width=\"128\" style=\"display:block;width:128px;height:auto\" alt=\"Grupo Gritsch\">'\n+ '</td>'\n+ '<td valign=\"middle\">'\n+ '<div style=\"font-size:12px;font-weight:700;text-transform:uppercase;color:' + CINZA + '\">Torre de Controle</div>'\n+ '<div style=\"font-size:23px;font-weight:600;color:' + AZUL + ';margin-top:4px\">Relatório Semanal de Velocidade</div>'\n+ '<div style=\"font-size:13px;color:' + CINZA + ';margin-top:3px\">' + (d.filial || '—') + '</div>'\n+ '</td>'\n+ '<td valign=\"middle\" align=\"right\">'\n+ '<div style=\"font-size:12px;font-weight:700;text-transform:uppercase;color:' + CINZA + '\">Semana</div>'\n+ '<div style=\"font-size:13px;color:' + CINZA + ';margin-top:6px\">' + (d.dataRef || '—') + '</div>'\n+ '</td>'\n+ '</tr></table></td></tr>'\n\n+ '<tr><td style=\"padding:24px 24px 4px\">'\n+ '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr>'\n+ boxKpi('Eventos na semana', fmtNum(d.totalEventos), '', AZUL)\n+ boxKpi('Velocidade máxima', fmtDec(d.velMax), 'km/h', (d.velMax >= 120 ? ALERTA : AZUL))\n+ boxKpi('Velocidade média', fmtDec(d.velMedia), 'km/h', AZUL)\n+ '</tr></table></td></tr>'\n\n+ boxResumo\n+ secRecid\n+ secDias\n\n+ faixaSecao('Top 10 ocorrências mais graves')\n+ tabela(th('Placa') + th('Modelo') + th('Origem', 'center')\n       + th('Velocidade', 'right') + th('Data/hora') + th('Local'), rowsTop)\n\n+ faixaSecao('Alertas por placa (Top 15)')\n+ tabela(th('Placa') + th('Modelo') + th('Origem', 'center')\n       + th('Qtd', 'center') + th('Pico', 'right'), rowsPlacas)\n\n+ '<tr><td style=\"padding:24px 32px;background:' + AZUL + ';border-radius:0 0 10px 10px\">'\n+ '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr>'\n+ '<td valign=\"middle\">'\n+ '<img src=\"' + LOGO_BRANCA + '\" width=\"110\" style=\"display:block;width:110px;height:auto\" alt=\"Gritsch\">'\n+ '</td>'\n+ '<td valign=\"middle\" align=\"right\" style=\"font-size:11px;color:' + BRANCO + ';line-height:1.7\">'\n+ 'Relatório automático da Torre de Controle · semanal<br>'\n+ 'Fontes: 3STEC, Nuxeo e Omnilink · somente filiais com 5+ eventos na semana<br>'\n+ 'torredecontrole@gritsch.com.br'\n+ '</td>'\n+ '</tr></table></td></tr>'\n\n+ '</table></td></tr></table></body></html>';\n\nreturn [{ json: { ...d, htmlEmail: html } }];\n"
+      },
+      "id": "1adac956-8b43-4510-8486-ef83f42612da",
+      "name": "13S - Gerar HTML Email Semanal",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        -640,
+        192
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "fromEmail": "naoresponda@gritsch.com.br",
+        "toEmail": "={{ $json.emailDestino }}",
+        "subject": "=Relatorio Semanal Velocidade | {{ $json.filial }} | {{ $json.dataRef }}",
+        "html": "={{ $json.htmlEmail }}",
+        "options": {
+          "appendAttribution": false,
+          "ccEmail": "={{ $json.emailCC }}"
+        }
+      },
+      "id": "28766401-e2b2-4a5f-8c07-a1032526b5ed",
+      "name": "14S - Enviar Email Filial",
+      "type": "n8n-nodes-base.emailSend",
+      "position": [
+        -416,
+        336
+      ],
+      "typeVersion": 2.1,
+      "webhookId": "d49021b8-32d6-4005-87dd-438990f3e4a8",
+      "credentials": {
+        "smtp": {
+          "id": "PQ487x2sKWu1B4l2",
+          "name": "Email - naoresponda@gritsch.com.br"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "var filiais = $('11S - Agrupar por Filial + KPIs').all();\nvar dataRef = $('01S - Calcular Periodo Semanal').first().json.dataRef;\nif (filiais.length === 0 || (filiais.length === 1 && filiais[0].json._semEventos)) {\n  return [{ json: { _semEventos: true, dataRef: dataRef, totalFiliais: 0,\n    totalEventosGeral: 0, velMaxGeral: 0, velMediaGeral: 0,\n    rankingFiliais: [], piorOfensorGeral: null, recidivistasGeral: [] } }];\n}\nvar totalEventosGeral = 0, velMaxGeral = 0, somaVelMedia = 0, countVelMedia = 0;\nvar rankingFiliais = [], piorOfensorGeral = null, recidivistasGeral = [];\nfor (var i = 0; i < filiais.length; i++) {\n  var f = filiais[i].json;\n  if (f._semEventos) continue;\n  totalEventosGeral += (f.totalEventos || 0);\n  if ((f.velMax || 0) > velMaxGeral) velMaxGeral = f.velMax;\n  if (f.velMedia > 0) { somaVelMedia += f.velMedia * f.totalEventos; countVelMedia += f.totalEventos; }\n  var topPlaca = (f.tabelaPlacas && f.tabelaPlacas[0]) || null;\n  rankingFiliais.push({\n    filial: f.filial, totalEventos: f.totalEventos || 0, velMax: f.velMax || 0,\n    velMedia: f.velMedia || 0, qtdPlacasEnvolvidas: (f.tabelaPlacas || []).length,\n    qtdRecidivistas: (f.recidivistas || []).length,\n    topPlaca: topPlaca ? { placa: topPlaca.placa, modelo: topPlaca.modelo || '',\n      qtd: topPlaca.qtd, velMax: topPlaca.velMax } : null\n  });\n  if (topPlaca && (!piorOfensorGeral || topPlaca.qtd > piorOfensorGeral.qtd)) {\n    piorOfensorGeral = { placa: topPlaca.placa, modelo: topPlaca.modelo || '',\n      qtd: topPlaca.qtd, velMax: topPlaca.velMax, filial: f.filial };\n  }\n  var recids = f.recidivistas || [];\n  for (var ri = 0; ri < recids.length; ri++) {\n    recidivistasGeral.push(Object.assign({}, recids[ri], { filial: f.filial }));\n  }\n}\nrankingFiliais.sort(function(a,b){ return b.totalEventos - a.totalEventos; });\nrecidivistasGeral.sort(function(a,b){ return b.diasAtivos - a.diasAtivos || b.totalAlertas - a.totalAlertas; });\nvar velMediaGeral = countVelMedia > 0 ? Math.round((somaVelMedia / countVelMedia) * 100) / 100 : 0;\nreturn [{ json: { dataRef: dataRef, totalFiliais: rankingFiliais.length,\n  totalEventosGeral: totalEventosGeral, velMaxGeral: velMaxGeral, velMediaGeral: velMediaGeral,\n  rankingFiliais: rankingFiliais, piorOfensorGeral: piorOfensorGeral,\n  recidivistasGeral: recidivistasGeral,\n  consolidadoDestinatarios: filiais[0] && filiais[0].json && filiais[0].json.consolidadoDestinatarios ? filiais[0].json.consolidadoDestinatarios : 'jefferson@gritsch.com.br',\n  consolidadoCC: filiais[0] && filiais[0].json && filiais[0].json.consolidadoCC ? filiais[0].json.consolidadoCC : 'sandro@gritsch.com.br,torredecontrole@gritsch.com.br,flavio@gritsch.com.br,fabio.pepplow@gritsch.com.br',\n  _semEventos: false } }];\n"
+      },
+      "id": "3802c12a-dee2-4180-a1f6-3c1de7a037e2",
+      "name": "15S - Consolidar Geral Semanal",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        -640,
+        0
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "jsCode": "// ===========================================================================\n// 16S - Gerar HTML Geral Semanal  (identidade visual Grupo Gritsch, v1.0)\n//\n// Mesma paleta e componentes de \"Gerar HTML Geral\" (diario). Ver aquele\n// arquivo para o mapeamento secao-a-secao do design system.\n//\n// UMA SECAO A MAIS: \"Reincidentes globais\" (d.recidivistasGeral), que so faz\n// sentido numa janela de 7 dias — cada linha ja vem com a filial anexada\n// pelo node 15S.\n//\n// CORRIGIDO em relacao a versao anterior deste node: o rodape dizia \"Fonte:\n// Nuxeo\" e \"acima de 180 km/h removido por erro de sensor\" — texto de uma\n// fase anterior do projeto, antes da 3S e da Omnilink entrarem e antes do\n// teto de plausibilidade virar por classe de veiculo (ver\n// silver/23_plausibilidade_velocidade.sql). Alinhado ao rodape do diario.\n// ===========================================================================\n\nconst d = $json;\n\nconst fmtNum = (n) => String(n ?? 0).replace(/\\B(?=(\\d{3})+(?!\\d))/g, '.');\nconst fmtDec = (n) => String(n ?? 0).replace('.', ',');\n\nconst AZUL = '#213035', VINHO = '#8E2E2F', ALERTA = '#FA1126', CRITICO = '#5A181C';\nconst ATENCAO = '#E8A33D', POSITIVO = '#13880D', CINZA = '#4E4D4D';\nconst BORDA = '#BFBFBF', REGUA = '#E2E2E2', FUNDO = '#F2F2F2', BRANCO = '#FFFFFF';\n\nconst FONTE = \"'Roboto Condensed','Arial Narrow',Arial,sans-serif\";\n\nconst LOGO_ESCURA = 'https://gritsch.com.br/wp-content/uploads/2022/03/logomarca-1_gritsch-1.png';\nconst LOGO_BRANCA = 'https://gritsch.com.br/wp-content/uploads/2023/07/logo_branca1080.png';\n\nconst corVelocidade = (v) => (v >= 140 ? CRITICO : v >= 120 ? ALERTA : ATENCAO);\n\n// Destinatarios do consolidado, vindos do node 11S/15S — que por sua vez lê\n// torre.email_gritsch_config (chaves consolidado_destinatarios/consolidado_cc).\nconst emailDestinoConsolidado = d.consolidadoDestinatarios || 'jefferson@gritsch.com.br';\nconst emailCCConsolidado = d.consolidadoCC || 'sandro@gritsch.com.br,torredecontrole@gritsch.com.br,flavio@gritsch.com.br,fabio.pepplow@gritsch.com.br';\n\nconst abre = () =>\n  '<!DOCTYPE html><html lang=\"pt-BR\"><head><meta charset=\"UTF-8\">'\n  + '<meta name=\"viewport\" content=\"width=device-width,initial-scale=1.0\">'\n  + '<link href=\"https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@400;600;700&display=swap\" rel=\"stylesheet\">'\n  + '</head><body style=\"margin:0;padding:0;background:' + FUNDO + ';font-family:' + FONTE + '\">'\n  + '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:' + FUNDO + ';padding:28px 0\">'\n  + '<tr><td align=\"center\">'\n  + '<table width=\"760\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:760px;width:100%;'\n  + 'background:' + BRANCO + ';border:1.6px solid ' + BORDA + ';border-radius:12px\">';\n\nconst rodape = () =>\n  '<tr><td style=\"padding:24px 32px;background:' + AZUL + ';border-radius:0 0 10px 10px\">'\n  + '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr>'\n  + '<td valign=\"middle\">'\n  + '<img src=\"' + LOGO_BRANCA + '\" width=\"120\" style=\"display:block;width:120px;height:auto\" alt=\"Gritsch\">'\n  + '</td>'\n  + '<td valign=\"middle\" align=\"right\" style=\"font-size:11px;color:' + BRANCO + ';line-height:1.7\">'\n  + 'Relatório automático da Torre de Controle · semanal<br>'\n  + 'Fontes: 3STEC, Nuxeo e Omnilink · somente filiais com 5+ eventos na semana<br>'\n  + 'torredecontrole@gritsch.com.br'\n  + '</td></tr></table></td></tr>'\n  + '</table></td></tr></table></body></html>';\n\nconst cabecalho = (subtitulo) =>\n  '<tr><td style=\"padding:24px 32px 18px;border-bottom:3px solid ' + VINHO + '\">'\n  + '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr>'\n  + '<td valign=\"middle\" width=\"140\" style=\"padding-right:22px\">'\n  + '<img src=\"' + LOGO_ESCURA + '\" width=\"128\" style=\"display:block;width:128px;height:auto\" alt=\"Grupo Gritsch\">'\n  + '</td>'\n  + '<td valign=\"middle\">'\n  + '<div style=\"font-size:12px;font-weight:700;text-transform:uppercase;color:' + CINZA + '\">Torre de Controle</div>'\n  + '<div style=\"font-size:23px;font-weight:600;color:' + AZUL + ';margin-top:4px\">Visão Geral Semanal</div>'\n  + '<div style=\"font-size:13px;color:' + CINZA + ';margin-top:3px\">' + subtitulo + '</div>'\n  + '</td>'\n  + '<td valign=\"middle\" align=\"right\">'\n  + '<div style=\"font-size:12px;font-weight:700;text-transform:uppercase;color:' + CINZA + '\">Semana</div>'\n  + '<div style=\"font-size:13px;color:' + CINZA + ';margin-top:6px\">' + (d.dataRef || '—') + '</div>'\n  + '</td></tr></table></td></tr>';\n\n// ---------------------------------------------------------------------------\n// Semana sem filial com volume relevante (nenhuma bateu o minimo de 5\n// eventos). Unico lugar do relatorio onde o verde e correto (regra 5.3).\n// ---------------------------------------------------------------------------\nif (d._semEventos) {\n  const vazio = abre()\n    + cabecalho('Consolidado de todas as filiais')\n    + '<tr><td style=\"padding:44px 32px;text-align:center\">'\n    + '<table cellpadding=\"0\" cellspacing=\"0\" align=\"center\" style=\"background:' + FUNDO + ';'\n    + 'border-left:4px solid ' + POSITIVO + ';border-radius:0 8px 8px 0\">'\n    + '<tr><td style=\"padding:18px 28px;text-align:left\">'\n    + '<div style=\"font-size:12px;font-weight:700;text-transform:uppercase;color:' + POSITIVO + '\">Dentro da meta</div>'\n    + '<div style=\"font-size:20px;font-weight:600;color:' + AZUL + ';margin-top:6px\">Nenhuma filial com volume relevante na semana</div>'\n    + '<div style=\"font-size:13px;color:' + CINZA + ';margin-top:6px\">Nenhuma filial atingiu o mínimo de 5 eventos nesta semana.</div>'\n    + '</td></tr></table></td></tr>'\n    + rodape();\n  return [{ json: { ...d, htmlEmail: vazio, emailDestino: emailDestinoConsolidado, emailCC: emailCCConsolidado } }];\n}\n\n// --- KPI ------------------------------------------------------------------\nconst boxKpi = (rotulo, valor, unidade, corNumero) =>\n  '<td width=\"25%\" valign=\"top\" style=\"padding:0 6px\">'\n  + '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:' + BRANCO + ';'\n  + 'border:1.6px solid ' + BORDA + ';border-radius:12px\"><tr><td style=\"padding:14px 18px\">'\n  + '<div style=\"font-size:11px;font-weight:700;text-transform:uppercase;color:' + CINZA + ';'\n  + 'font-family:' + FONTE + '\">' + rotulo + '</div>'\n  + '<div style=\"font-size:26px;font-weight:700;color:' + (corNumero || AZUL) + ';margin-top:4px;'\n  + 'font-family:' + FONTE + '\">' + valor\n  + (unidade ? '<span style=\"font-size:12px;font-weight:400;color:' + CINZA + '\"> ' + unidade + '</span>' : '')\n  + '</div></td></tr></table></td>';\n\n// --- Pior ofensor (lider da semana) ----------------------------------------\nlet boxPior = '';\nif (d.piorOfensorGeral) {\n  const p = d.piorOfensorGeral;\n  const cor = corVelocidade(p.velMax);\n  const nivel = p.velMax >= 140 ? 'Crítico' : p.velMax >= 120 ? 'Alto' : 'Moderado';\n  boxPior = '<tr><td style=\"padding:22px 32px 0\">'\n    + '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:' + FUNDO + ';'\n    + 'border-left:4px solid ' + cor + ';border-radius:0 8px 8px 0\"><tr><td style=\"padding:16px 22px\">'\n    + '<div style=\"font-size:11px;font-weight:700;text-transform:uppercase;color:' + CINZA + '\">'\n    + 'Veículo líder na semana · nível ' + nivel + '</div>'\n    + '<div style=\"font-size:15px;color:' + CINZA + ';margin-top:8px;line-height:1.7\">'\n    + '<span style=\"font-weight:700;color:' + AZUL + ';font-size:17px\">' + p.placa + '</span>'\n    + ' · ' + (p.modelo || '—') + ' · ' + (p.filial || '—') + '<br>'\n    + '<span style=\"font-weight:700;color:' + AZUL + '\">' + fmtNum(p.qtd) + '</span> alertas na semana'\n    + ' · pico de <span style=\"font-weight:700;color:' + cor + '\">' + fmtDec(p.velMax) + ' km/h</span>'\n    + '</div></td></tr></table></td></tr>';\n}\n\nconst th = (txt, align) =>\n  '<th style=\"padding:10px 12px;text-align:' + (align || 'left') + ';font-size:12px;font-weight:700;'\n  + 'text-transform:uppercase;color:' + BRANCO + ';background:' + VINHO + ';font-family:' + FONTE + '\">' + txt + '</th>';\n\nconst td = (c, align, cor, peso) =>\n  '<td style=\"padding:10px 12px;border-bottom:1.6px solid ' + REGUA + ';font-size:13px;'\n  + 'text-align:' + (align || 'left') + ';color:' + (cor || CINZA) + ';font-weight:' + (peso || '400') + ';'\n  + 'font-family:' + FONTE + '\">' + c + '</td>';\n\nconst faixaSecao = (titulo, corFaixa) =>\n  '<tr><td style=\"padding:26px 32px 0\"><table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr>'\n  + '<td style=\"background:' + (corFaixa || VINHO) + ';border-radius:10px 10px 0 0;padding:9px 20px;'\n  + 'font-size:14px;font-weight:700;color:' + BRANCO + ';font-family:' + FONTE + '\">' + titulo + '</td>'\n  + '</tr></table></td></tr>';\n\n// --- Reincidentes globais (Top 20, ja vem cortado do node 15S) ------------\nconst rg = (d.recidivistasGeral || []).slice(0, 20);\nlet secRecidGeral = '';\nif (rg.length > 0) {\n  let rowsR = '';\n  for (const r of rg) {\n    rowsR += '<tr>'\n      + td(r.placa, 'left', AZUL, '700')\n      + td(r.modelo || '—', 'left')\n      + td(r.filial || '—', 'left')\n      + td(r.diasAtivos + 'd / ' + r.totalAlertas + 'x', 'center', AZUL, '700')\n      + td(fmtDec(r.velMax) + ' km/h', 'right', corVelocidade(r.velMax), '700')\n      + '</tr>';\n  }\n  secRecidGeral = faixaSecao('Reincidentes globais · 3 ou mais dias', CRITICO)\n    + '<tr><td style=\"padding:0 32px\">'\n    + '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1.6px solid ' + BORDA + ';'\n    + 'border-top:none;border-radius:0 0 12px 12px;background:' + BRANCO + '\">'\n    + '<tr>' + th('Placa') + th('Modelo') + th('Filial') + th('Dias / Alertas', 'center') + th('Pico', 'right') + '</tr>'\n    + rowsR + '</table></td></tr>';\n}\n\n// --- Ranking de filiais ------------------------------------------------\nlet rowsFiliais = '', pos = 1;\nfor (const f of (d.rankingFiliais || [])) {\n  const topInfo = f.topPlaca ? f.topPlaca.placa + ' (' + f.topPlaca.qtd + 'x)' : '—';\n  const recidLabel = f.qtdRecidivistas > 0 ? f.qtdRecidivistas + ' reincid.' : '—';\n  rowsFiliais += '<tr>'\n    + td(pos, 'center', BORDA, '700')\n    + td(f.filial, 'left', AZUL, '700')\n    + td(fmtNum(f.totalEventos), 'center')\n    + td(f.qtdPlacasEnvolvidas, 'center')\n    + td(recidLabel, 'center', f.qtdRecidivistas > 0 ? CRITICO : CINZA, f.qtdRecidivistas > 0 ? '700' : '400')\n    + td(fmtDec(f.velMax) + ' km/h', 'right', corVelocidade(f.velMax), '700')\n    + td(topInfo, 'left')\n    + '</tr>';\n  pos++;\n}\n\nconst html = abre()\n  + cabecalho('Consolidado de todas as filiais · ' + fmtNum(d.totalFiliais) + ' com 5+ eventos')\n  + '<tr><td style=\"padding:24px 26px 4px\"><table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr>'\n  + boxKpi('Eventos na semana', fmtNum(d.totalEventosGeral), '', AZUL)\n  + boxKpi('Filiais', fmtNum(d.totalFiliais), '', AZUL)\n  + boxKpi('Velocidade máxima', fmtDec(d.velMaxGeral), 'km/h', (d.velMaxGeral >= 120 ? ALERTA : AZUL))\n  + boxKpi('Velocidade média', fmtDec(d.velMediaGeral), 'km/h', AZUL)\n  + '</tr></table></td></tr>'\n  + boxPior\n  + secRecidGeral\n  + faixaSecao('Ranking de filiais (mínimo 5 eventos)')\n  + '<tr><td style=\"padding:0 32px\">'\n  + '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1.6px solid ' + BORDA + ';'\n  + 'border-top:none;border-radius:0 0 12px 12px;background:' + BRANCO + '\">'\n  + '<tr>' + th('#', 'center') + th('Filial') + th('Eventos', 'center')\n  + th('Placas', 'center') + th('Reincid.', 'center') + th('Pico', 'right') + th('Top alertas') + '</tr>'\n  + rowsFiliais + '</table></td></tr>'\n  + rodape();\n\nreturn [{ json: { ...d, htmlEmail: html, emailDestino: emailDestinoConsolidado, emailCC: emailCCConsolidado } }];\n"
+      },
+      "id": "ca8bbf98-fd50-4265-8cc0-d074effc3ea2",
+      "name": "16S - Gerar HTML Geral Semanal",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        -416,
+        0
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "fromEmail": "naoresponda@gritsch.com.br",
+        "toEmail": "={{ $json.emailDestino }}",
+        "subject": "=Visão Geral Semanal | Torre de Controle | {{ $json.dataRef }}",
+        "html": "={{ $json.htmlEmail }}",
+        "options": {
+          "appendAttribution": false,
+          "ccEmail": "={{ $json.emailCC }}"
+        }
+      },
+      "id": "c5b94322-d242-4520-ae16-cfc52dd8d3a0",
+      "name": "17S - Enviar Consolidado Semanal1",
+      "type": "n8n-nodes-base.emailSend",
+      "position": [
+        -192,
+        0
+      ],
+      "typeVersion": 2.1,
+      "webhookId": "58828d3a-05cc-484d-b878-0b36e9f2e1da",
+      "credentials": {
+        "smtp": {
+          "id": "PQ487x2sKWu1B4l2",
+          "name": "Email - naoresponda@gritsch.com.br"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "naoresponda@gritsch.com.br",
+        "toEmail": "torredecontrole@gritsch.com.br;cesar@gritsch.com.br",
+        "subject": "🚨 ERRO CRÍTICO n8n: Falha no Relatório Semanal de Telemetria",
+        "html": "=<!DOCTYPE html>\n<html>\n<head>\n  <meta charset=\"utf-8\">\n</head>\n<body style=\"margin:0;padding:0;background-color:#F4F6F8;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;\">\n  <table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"padding:32px 0;\">\n    <tr>\n      <td align=\"center\">\n        <table width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"background-color:#FFFFFF;border-radius:6px;border:1px solid #E5E7EB;overflow:hidden;\">\n          \n          <tr>\n            <td style=\"background-color:#DC2626;padding:24px;text-align:center;\">\n              <h2 style=\"color:#FFFFFF;margin:0;font-size:20px;letter-spacing:0.5px;\">⚠️ Falha na Automação da Torre</h2>\n            </td>\n          </tr>\n          \n          <tr>\n            <td style=\"padding:32px 40px;color:#374151;font-size:14px;line-height:1.6;\">\n              <p style=\"margin-top:0;\">Olá, equipe.</p>\n              <p>O fluxo <strong>{{ $workflow.name }}</strong> encontrou um erro crítico e não conseguiu ser concluído com sucesso.</p>\n              \n              <div style=\"background-color:#FEF2F2;border-left:4px solid #DC2626;padding:16px;margin:24px 0;border-radius:0 4px 4px 0;\">\n                <p style=\"margin:0 0 8px 0;font-size:12px;text-transform:uppercase;color:#991B1B;font-weight:700;letter-spacing:0.5px;\">Mensagem do Sistema:</p>\n                <code style=\"color:#7F1D1D;font-family:monospace;font-size:13px;display:block;word-wrap:break-word;\">\n                  {{ $json.error.message || 'Erro não especificado pelo nó.' }}\n                </code>\n                <p style=\"margin:12px 0 0 0;font-size:13px;color:#991B1B;\">\n                  <strong>Detalhes:</strong> {{ $json.error.description || 'Sem detalhes adicionais.' }}\n                </p>\n              </div>\n              \n              <p style=\"margin-bottom:0;\">Por favor, acesse o painel do n8n para investigar a causa raiz.</p>\n            </td>\n          </tr>\n          \n          <tr>\n            <td style=\"background-color:#F9FAFB;padding:20px 40px;border-top:1px solid #E5E7EB;\">\n              <div style=\"font-size:11px;color:#6B7280;line-height:1.5;\">\n                <strong>Data da ocorrência:</strong> {{ new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }) }}<br>\n                <strong>ID da Execução:</strong> {{ $execution.id }}\n              </div>\n            </td>\n          </tr>\n          \n        </table>\n      </td>\n    </tr>\n  </table>\n</body>\n</html>",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        -1088,
+        592
+      ],
+      "id": "1721956d-566d-4530-bea8-448a3c4d2bf7",
+      "name": "99S - Alerta de Erro Crítico",
+      "webhookId": "b61ee10b-92ae-4104-a6a8-31e1864e146a",
+      "credentials": {
+        "smtp": {
+          "id": "PQ487x2sKWu1B4l2",
+          "name": "Email - naoresponda@gritsch.com.br"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "00S - Schedule Segunda-Feira": {
+      "main": [
+        [
+          {
+            "node": "01S - Calcular Periodo Semanal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "01S - Calcular Periodo Semanal": {
+      "main": [
+        [
+          {
+            "node": "09S - PG Ler Eventos da Semana",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "09S - PG Ler Eventos da Semana": {
+      "main": [
+        [
+          {
+            "node": "11S - Agrupar por Filial + KPIs",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "99S - Alerta de Erro Crítico",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "11S - Agrupar por Filial + KPIs": {
+      "main": [
+        [
+          {
+            "node": "12S - Loop Over Filiais",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "12S - Loop Over Filiais": {
+      "main": [
+        [
+          {
+            "node": "15S - Consolidar Geral Semanal",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "13S - Gerar HTML Email Semanal",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "99S - Alerta de Erro Crítico",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "13S - Gerar HTML Email Semanal": {
+      "main": [
+        [
+          {
+            "node": "14S - Enviar Email Filial",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "14S - Enviar Email Filial": {
+      "main": [
+        [
+          {
+            "node": "12S - Loop Over Filiais",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "15S - Consolidar Geral Semanal": {
+      "main": [
+        [
+          {
+            "node": "16S - Gerar HTML Geral Semanal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "16S - Gerar HTML Geral Semanal": {
+      "main": [
+        [
+          {
+            "node": "17S - Enviar Consolidado Semanal1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "99S - Alerta de Erro Crítico": {
+      "main": [
+        [
+          {
+            "node": "12S - Loop Over Filiais",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "2K04ENBN6GUGlQqC",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "e85727d0-c67c-42ee-9c83-3f81db9e0490",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fb581638443806838dcc4ad5d9ab57cd83fc9fe2e7f923a0752e9d8321c3faf5"
+  },
+  "id": "3ZZEZh7nVzyNEPOw",
+  "tags": [
+    {
+      "updatedAt": "2026-04-24T18:35:08.809Z",
+      "createdAt": "2026-04-24T18:35:08.809Z",
+      "id": "qM6x0l0UABeuQwfU",
+      "name": "telemetria"
+    },
+    {
+      "updatedAt": "2026-04-24T18:35:08.808Z",
+      "createdAt": "2026-04-24T18:35:08.808Z",
+      "id": "EHG4FqrPM7zG3eYN",
+      "name": "torre-de-controle"
+    }
+  ]
+}

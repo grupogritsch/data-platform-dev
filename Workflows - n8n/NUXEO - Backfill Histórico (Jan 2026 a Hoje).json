@@ -1,0 +1,357 @@
+{
+  "name": "NUXEO - Backfill Histórico (Jan 2026 a Hoje)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "e5a5a505-0001-4000-8000-000000000001",
+      "name": "Executar Manualmente (Backfill)",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -3800,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.nuxeo.com.br/rest/user/login/",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"client\": \"Gritsch\",\n  \"login\": \"Gritsch\",\n  \"psw\": \"gr1tsch\"\n}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "e5a5a505-0001-4000-8000-000000000002",
+      "name": "01 - Nuxeo Auth",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -3580,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.nuxeo.com.br/rest/report/targetAndPosition/?position=true",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Auth-Token",
+              "value": "={{ $json.token }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "id": "e5a5a505-0001-4000-8000-000000000003",
+      "name": "02 - Buscar Frota Nuxeo API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -3360,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE SCHEMA IF NOT EXISTS bronze;\nCREATE TABLE IF NOT EXISTS bronze.nuxeo_eventos (\n    id BIGSERIAL PRIMARY KEY,\n    placa VARCHAR(20)\n);\n\nSELECT DISTINCT UPPER(TRIM(placa)) AS placa FROM bronze.nuxeo_eventos WHERE placa IS NOT NULL AND placa <> '';",
+        "options": {}
+      },
+      "alwaysOutputData": true,
+      "id": "e5a5a505-0001-4000-8000-000000000004",
+      "name": "03 - Buscar Placas Já Processadas DW",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -3140,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $('02 - Buscar Frota Nuxeo API').first().json;\nconst token = $('01 - Nuxeo Auth').first().json.token;\nconst listaNuxeo = response.positions || response.targets || response || [];\n\n// Obter lista de placas ja gravadas na tabela bronze.nuxeo_eventos\nconst jaProcessadasItems = $input.all();\nconst jaProcessadasSet = new Set();\nfor (const item of jaProcessadasItems) {\n  if (item.json && item.json.placa) {\n    jaProcessadasSet.add(String(item.json.placa).trim().toUpperCase());\n  }\n}\n\nconst pendentes = [];\nconst placasVistas = new Set();\n\nfor (const v of listaNuxeo) {\n  const placa = (v.identifier || '').trim().toUpperCase();\n  if (!placa || placasVistas.has(placa)) continue;\n  placasVistas.add(placa);\n  \n  // Se a placa ja foi salva no DW, pula para nao duplicar trabalho\n  if (jaProcessadasSet.has(placa)) {\n    console.log(`[SKIP] Placa ${placa} ja foi processada anteriormente.`);\n    continue;\n  }\n  \n  pendentes.push({\n    json: {\n      token,\n      placa\n    }\n  });\n}\n\nconsole.log(`[BACKFILL RESUMABLE] Total Nuxeo: ${listaNuxeo.length} | Já no Banco: ${jaProcessadasSet.size} | Pendentes a processar: ${pendentes.length}`);\nreturn pendentes;"
+      },
+      "id": "e5a5a505-0001-4000-8000-000000000005",
+      "name": "04 - Filtrar Apenas Placas Pendentes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2920,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "e5a5a505-0001-4000-8000-000000000006",
+      "name": "05 - Loop por Placa (1 por vez)",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -2700,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst token = item.token;\nconst placa = item.placa;\n\nif (!placa) {\n  return [{ json: { _skip: true } }];\n}\n\n// Janelas Mensais de 01/01/2026 ate hoje\nconst janelas = [\n  { begin: '01/01/2026 00:00:00', end: '31/01/2026 23:59:59' },\n  { begin: '01/02/2026 00:00:00', end: '28/02/2026 23:59:59' },\n  { begin: '01/03/2026 00:00:00', end: '31/03/2026 23:59:59' },\n  { begin: '01/04/2026 00:00:00', end: '30/04/2026 23:59:59' },\n  { begin: '01/05/2026 00:00:00', end: '31/05/2026 23:59:59' },\n  { begin: '01/06/2026 00:00:00', end: '30/06/2026 23:59:59' },\n  { begin: '01/07/2026 00:00:00', end: '31/07/2026 23:59:59' }\n];\n\nconst requests = [];\nfor (const j of janelas) {\n  const beginEnc = encodeURIComponent(j.begin);\n  const endEnc = encodeURIComponent(j.end);\n  requests.push({\n    json: {\n      token,\n      placa,\n      begin: j.begin,\n      end: j.end,\n      url: `https://api.nuxeo.com.br/rest/report/events/?begin=${beginEnc}&end=${endEnc}&plate=${placa}`\n    }\n  });\n}\n\nconsole.log(`[BACKFILL RESUMABLE] Processando Placa Pendente: ${placa}`);\nreturn requests;"
+      },
+      "id": "e5a5a505-0001-4000-8000-000000000007",
+      "name": "06 - Montar Requisições da Placa",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2480,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Auth-Token",
+              "value": "={{ $json.token }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "e5a5a505-0001-4000-8000-000000000008",
+      "name": "07 - HTTP Request Nuxeo Events",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2260,
+        100
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const rawItems = $input.all();\n\nconst esc = (v) => v != null ? String(v).replace(/'/g, \"''\") : null;\nconst valStr = (v) => v != null ? `'${esc(v)}'` : 'NULL';\nconst valNum = (v) => (v != null && !isNaN(v)) ? Number(v) : 'NULL';\nconst valJson = (obj) => `'${JSON.stringify(obj).replace(/'/g, \"''\")}'::jsonb`;\n\nconst sqlStatements = [];\nsqlStatements.push(`\nCREATE SCHEMA IF NOT EXISTS bronze;\nCREATE TABLE IF NOT EXISTS bronze.nuxeo_eventos (\n    id BIGSERIAL PRIMARY KEY,\n    placa VARCHAR(20),\n    complemento TEXT,\n    nome_evento TEXT,\n    data_evento TEXT,\n    velocidade NUMERIC(6,2),\n    latitude NUMERIC(10,6),\n    longitude NUMERIC(10,6),\n    endereco TEXT,\n    cidade VARCHAR(150),\n    estado VARCHAR(50),\n    pais VARCHAR(50),\n    payload_json JSONB,\n    ingested_at TIMESTAMPTZ DEFAULT NOW()\n);\n`);\n\nlet totalRecords = 0;\nconst allEvents = [];\n\nfor (const item of rawItems) {\n  const resp = item.json;\n  if (resp._skip) continue;\n  const events = resp.events || [];\n  if (!Array.isArray(events) || events.length === 0) continue;\n  for (const evt of events) {\n    allEvents.push({\n      ...evt,\n      placaFallback: resp.placa\n    });\n  }\n}\n\nif (allEvents.length === 0) {\n  return [{ json: { _sql: \"SELECT 0 AS inseridos;\", totalRecords: 0 } }];\n}\n\nconst chunkSize = 500;\nfor (let i = 0; i < allEvents.length; i += chunkSize) {\n  const chunk = allEvents.slice(i, i + chunkSize);\n  const values = chunk.map(evt => {\n    totalRecords++;\n    const placaFinal = evt.identifier || evt.placaFallback;\n    return '('\n      + valStr(placaFinal) + ', '\n      + valStr(evt.complement) + ', '\n      + valStr(evt.event) + ', '\n      + valStr(evt.date) + ', '\n      + valNum(evt.speed) + ', '\n      + valNum(evt.latitude) + ', '\n      + valNum(evt.longitude) + ', '\n      + valStr(evt.address) + ', '\n      + valStr(evt.city) + ', '\n      + valStr(evt.state) + ', '\n      + valStr(evt.country) + ', '\n      + valJson(evt)\n      + ')';\n  }).join(',\\n');\n\n  sqlStatements.push(`\n    INSERT INTO bronze.nuxeo_eventos (\n      placa, complemento, nome_evento, data_evento, velocidade, latitude, longitude, endereco, cidade, estado, pais, payload_json\n    ) VALUES ${values};\n  `);\n}\n\nreturn [{ json: { _sql: sqlStatements.join('\\n'), totalRecords } }];"
+      },
+      "id": "e5a5a505-0001-4000-8000-000000000009",
+      "name": "08 - Build INSERT Batch (Bronze)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2040,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json._sql }}",
+        "options": {}
+      },
+      "id": "e5a5a505-0001-4000-8000-000000000010",
+      "name": "09 - Inserir PostgreSQL DW (Bronze)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -1820,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 1,
+        "unit": "seconds"
+      },
+      "id": "e5a5a505-0001-4000-8000-000000000011",
+      "name": "10 - Pausa (1 seg)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -1600,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "console.log('[BACKFILL RESUMABLE] Todas as placas pendentes foram processadas!');\nreturn [{ json: { status: 'SUCESSO', mensagem: 'Backfill concluído para 100% das placas!' } }];"
+      },
+      "id": "e5a5a505-0001-4000-8000-000000000012",
+      "name": "11 - Backfill Concluído",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2700,
+        320
+      ]
+    }
+  ],
+  "connections": {
+    "Executar Manualmente (Backfill)": {
+      "main": [
+        [
+          {
+            "node": "01 - Nuxeo Auth",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "01 - Nuxeo Auth": {
+      "main": [
+        [
+          {
+            "node": "02 - Buscar Frota Nuxeo API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "02 - Buscar Frota Nuxeo API": {
+      "main": [
+        [
+          {
+            "node": "03 - Buscar Placas Já Processadas DW",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "03 - Buscar Placas Já Processadas DW": {
+      "main": [
+        [
+          {
+            "node": "04 - Filtrar Apenas Placas Pendentes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "04 - Filtrar Apenas Placas Pendentes": {
+      "main": [
+        [
+          {
+            "node": "05 - Loop por Placa (1 por vez)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "05 - Loop por Placa (1 por vez)": {
+      "main": [
+        [
+          {
+            "node": "06 - Montar Requisições da Placa",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "11 - Backfill Concluído",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "06 - Montar Requisições da Placa": {
+      "main": [
+        [
+          {
+            "node": "07 - HTTP Request Nuxeo Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "07 - HTTP Request Nuxeo Events": {
+      "main": [
+        [
+          {
+            "node": "08 - Build INSERT Batch (Bronze)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "08 - Build INSERT Batch (Bronze)": {
+      "main": [
+        [
+          {
+            "node": "09 - Inserir PostgreSQL DW (Bronze)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "09 - Inserir PostgreSQL DW (Bronze)": {
+      "main": [
+        [
+          {
+            "node": "10 - Pausa (1 seg)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "10 - Pausa (1 seg)": {
+      "main": [
+        [
+          {
+            "node": "05 - Loop por Placa (1 por vez)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

@@ -1,0 +1,123 @@
+{
+  "name": "GOLD - 1 - Setup dim_filial",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-480, 0],
+      "id": "a1b2c3d4-0001-4000-8000-000000000001",
+      "name": "Executar Manualmente"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS torre.gold_dim_filial (\n  garagem       TEXT PRIMARY KEY,\n  filial_nome   TEXT NOT NULL,\n  filial_estado CHAR(2),\n  filial_regiao TEXT,\n  tipo          TEXT NOT NULL CHECK (tipo IN ('GRITSCH', 'REFERENCIA', 'VEICULO_ESPECIAL'))\n);",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-240, 0],
+      "id": "a1b2c3d4-0001-4000-8000-000000000002",
+      "name": "Criar Tabela",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO torre.gold_dim_filial (garagem, filial_nome, filial_estado, filial_regiao, tipo)\nVALUES\n  ('GRITSCH - CWB (BASE)',       'Gritsch Curitiba',            'PR', 'Sul',           'GRITSCH'),\n  ('GRITSCH - CWB (DIR)',        'Gritsch Curitiba',            'PR', 'Sul',           'GRITSCH'),\n  ('GRITSCH - MATRIZ',           'Gritsch Curitiba',            'PR', 'Sul',           'GRITSCH'),\n  ('GRITSCH - LDB',              'Gritsch Londrina',            'PR', 'Sul',           'GRITSCH'),\n  ('GRITSCH - MGA',              'Gritsch Maringá',             'PR', 'Sul',           'GRITSCH'),\n  ('GRITSCH - PGR',              'Gritsch Ponta Grossa',        'PR', 'Sul',           'GRITSCH'),\n  ('GRITSCH - PBC',              'Gritsch Pato Branco',         'PR', 'Sul',           'GRITSCH'),\n  ('GRITSCH - GPA',              'Gritsch Guarapuava',          'PR', 'Sul',           'GRITSCH'),\n  ('GRITSCH - CSC',              'Gritsch Cascavel',            'PR', 'Sul',           'GRITSCH'),\n  ('GRITSCH - FLN',              'Gritsch Florianópolis',       'SC', 'Sul',           'GRITSCH'),\n  ('GRITSCH - JOI',              'Gritsch Joinville',           'SC', 'Sul',           'GRITSCH'),\n  ('GRITSCH - BLN',              'Gritsch Blumenau',            'SC', 'Sul',           'GRITSCH'),\n  ('GRITSCH - CHA',              'Gritsch Chapecó',             'SC', 'Sul',           'GRITSCH'),\n  ('GRITSCH - CRI',              'Gritsch Criciúma',            'SC', 'Sul',           'GRITSCH'),\n  ('GRITSCH - CTB',              'Gritsch Curitibanos',         'SC', 'Sul',           'GRITSCH'),\n  ('GRITSCH - POA',              'Gritsch Porto Alegre',        'RS', 'Sul',           'GRITSCH'),\n  ('GRITSCH - CXJ',              'Gritsch Caxias do Sul',       'RS', 'Sul',           'GRITSCH'),\n  ('GRITSCH - RIA',              'Gritsch Santa Maria',         'RS', 'Sul',           'GRITSCH'),\n  ('GRITSCH - GOI',              'Gritsch Goiânia',             'GO', 'Centro-Oeste',  'GRITSCH'),\n  ('GRITSCH - RVD',              'Gritsch Rio Verde',           'GO', 'Centro-Oeste',  'GRITSCH'),\n  ('GRITSCH - ITR',              'Gritsch Itumbiara',           'GO', 'Centro-Oeste',  'GRITSCH'),\n  ('GRITSCH - SNO',              'Gritsch Sinop',               'MT', 'Centro-Oeste',  'GRITSCH'),\n  ('GRITSCH - RDN',              'Gritsch Rondonópolis',        'MT', 'Centro-Oeste',  'GRITSCH'),\n  ('GRITSCH - CGB',              'Gritsch Cuiabá',              'MT', 'Centro-Oeste',  'GRITSCH'),\n  ('GRITSCH - CGR',              'Gritsch Campo Grande',        'MS', 'Centro-Oeste',  'GRITSCH'),\n  ('GRITSCH - BSB',              'Gritsch Brasília',            'DF', 'Centro-Oeste',  'GRITSCH'),\n  ('GRITSCH - SAO (FREGUESIA)',  'Gritsch São Paulo',           'SP', 'Sudeste',       'GRITSCH'),\n  ('GRITSCH - SAO (PERUS)',      'Gritsch São Paulo (Perus)',   'SP', 'Sudeste',       'GRITSCH'),\n  ('GRITSCH - SSA',              'Gritsch Salvador',            'BA', 'Nordeste',      'GRITSCH'),\n  ('GRITSCH - PMW',              'Gritsch Palmas',              'TO', 'Norte',         'GRITSCH'),\n  ('REFERÊNCIA CURITIBA',        'Referência Curitiba',         'PR', 'Sul',           'REFERENCIA'),\n  ('REFERENCIA CURITIBA',        'Referência Curitiba',         'PR', 'Sul',           'REFERENCIA'),\n  ('GRITSCH - CWB (ECT)',        'Gritsch Curitiba',            'PR', 'Sul',           'GRITSCH'),\n  ('GRITSCH - CBL',              'Gritsch Goiânia',             'GO', 'Centro-Oeste',  'GRITSCH'),\n  ('GRITSCH - PET',              'Gritsch Pelotas',             'RS', 'Sul',           'GRITSCH'),\n  ('VEÍCULOS PARA VENDA',        'Veículos para Venda',         NULL, NULL,            'VEICULO_ESPECIAL'),\n  ('VEÍCULOS VENDIDOS',          'Veículos Vendidos',           NULL, NULL,            'VEICULO_ESPECIAL'),\n  ('VEÍCULOS ROUBADOS',          'Veículos Roubados',           NULL, NULL,            'VEICULO_ESPECIAL'),\n  ('VEÍCULOS PARTICULARES',      'Veículos Particulares',       NULL, NULL,            'VEICULO_ESPECIAL'),\n  ('VEÍCULOS A DEFINIR',         'Veículos a Definir',          NULL, NULL,            'VEICULO_ESPECIAL')\nON CONFLICT (garagem) DO UPDATE SET\n  filial_nome   = EXCLUDED.filial_nome,\n  filial_estado = EXCLUDED.filial_estado,\n  filial_regiao = EXCLUDED.filial_regiao,\n  tipo          = EXCLUDED.tipo;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [0, 0],
+      "id": "a1b2c3d4-0001-4000-8000-000000000003",
+      "name": "Upsert Filiais",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT tipo, COUNT(*) AS total FROM torre.gold_dim_filial GROUP BY tipo ORDER BY tipo;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [240, 0],
+      "id": "a1b2c3d4-0001-4000-8000-000000000004",
+      "name": "Validar Resultado",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Executar Manualmente": {
+      "main": [
+        [
+          {
+            "node": "Criar Tabela",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Criar Tabela": {
+      "main": [
+        [
+          {
+            "node": "Upsert Filiais",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Filiais": {
+      "main": [
+        [
+          {
+            "node": "Validar Resultado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "a1b2c3d4-0001-4000-8000-000000000000",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fb581638443806838dcc4ad5d9ab57cd83fc9fe2e7f923a0752e9d8321c3faf5"
+  },
+  "id": "GOLD001dimFilial001",
+  "tags": [
+    {
+      "name": "gold"
+    },
+    {
+      "name": "setup"
+    },
+    {
+      "name": "torre-de-controle"
+    }
+  ]
+}

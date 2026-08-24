@@ -1,0 +1,199 @@
+{
+  "name": "GOLD - 3 - Setup dim_modelo_veiculo",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -640,
+        0
+      ],
+      "id": "a1b2c3d4-0004-4000-8000-000000000001",
+      "name": "Executar Manualmente"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS torre.gold_dim_modelo_veiculo (\n  id             SERIAL PRIMARY KEY,\n  padrao         TEXT NOT NULL UNIQUE,\n  modelo_simples TEXT NOT NULL,\n  marca          TEXT NOT NULL,\n  grupo_veiculo  TEXT NOT NULL CHECK (grupo_veiculo IN ('Bitruck','Truck','Toco','3/4','Pesado','Médio','Leve','Moto','Outros')),\n  prioridade     INT  NOT NULL DEFAULT 100\n);",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -400,
+        0
+      ],
+      "id": "a1b2c3d4-0004-4000-8000-000000000002",
+      "name": "Criar Tabela",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE OR REPLACE FUNCTION torre.gold_classificar_veiculo(p_modelo TEXT)\nRETURNS TEXT AS $$\n  SELECT COALESCE(\n    (SELECT grupo_veiculo\n     FROM torre.gold_dim_modelo_veiculo\n     WHERE REGEXP_REPLACE(\n             REGEXP_REPLACE(UPPER(p_modelo), '(\\d+)\\.(\\d+)', '\\1-\\2', 'g'),\n           '\\s+', ' ', 'g'\n           ) LIKE '%' || UPPER(padrao) || '%'\n     ORDER BY prioridade ASC\n     LIMIT 1),\n    'Leve'\n  );\n$$ LANGUAGE sql STABLE;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -160,
+        0
+      ],
+      "id": "a1b2c3d4-0004-4000-8000-000000000003",
+      "name": "Criar Função",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO torre.gold_dim_modelo_veiculo (padrao, modelo_simples, marca, grupo_veiculo, prioridade)\nVALUES\n-- Prioridade 5: padrões específicos para evitar falsos positivos\n('HR-V',                    'Honda HR-V',                   'Honda',           'Leve',   5),\n('DOBLO CARGO',             'Fiat Doblò Cargo',             'Fiat',            'Médio',  5),\n('DUSTER OROCH',            'Renault Duster Oroch',         'Renault',         'Médio',  5),\n('UNO FURGÃO',              'Fiat Uno Furgão',              'Fiat',            'Médio',  5),\n('KANGOO',                  'Renault Kangoo Express',       'Renault',         'Médio',  5),\n('MODELO NÃO IDENTIFICADO', 'Não Identificado',             'Desconhecida',    'Moto',   5),\n-- Prioridade 10: Bitrucks\n('VM 330',     'Volvo VM 330',              'Volvo',          'Bitruck', 10),\n('VM 290',     'Volvo VM 290',              'Volvo',          'Bitruck', 10),\n('VM',         'Volvo VM',                  'Volvo',          'Bitruck', 15),\n('CARGO 2423', 'Ford Cargo 2423',           'Ford',           'Bitruck', 10),\n('CARGO 2431', 'Ford Cargo 2431',           'Ford',           'Bitruck', 10),\n('ATEGO 2426', 'Mercedes-Benz Atego 2426', 'Mercedes-Benz',  'Bitruck', 10),\n('ATEGO 2429', 'Mercedes-Benz Atego 2429', 'Mercedes-Benz',  'Bitruck', 10),\n('30-330',     'VW Constellation 30-330',  'Volkswagen',     'Bitruck', 10),\n('30-280',     'VW Constellation 30-280',  'Volkswagen',     'Bitruck', 10),\n('26-260',     'VW Constellation 26-260',  'Volkswagen',     'Bitruck', 10),\n('24-280',     'VW Constellation 24-280',  'Volkswagen',     'Bitruck', 10),\n('24-250',     'VW Constellation 24-250',  'Volkswagen',     'Bitruck', 10),\n('23-220',     'VW Constellation 23-220',  'Volkswagen',     'Bitruck', 10),\n('23-210',     'VW Constellation 23-210',  'Volkswagen',     'Bitruck', 10),\n-- Prioridade 20: Trucks\n('ATEGO 1719', 'Mercedes-Benz Atego 1719', 'Mercedes-Benz', 'Truck', 20),\n('ATEGO 1419', 'Mercedes-Benz Atego 1419', 'Mercedes-Benz', 'Truck', 20),\n('ATRON 1719', 'Mercedes-Benz Atron 1719', 'Mercedes-Benz', 'Truck', 20),\n('CARGO 1519', 'Ford Cargo 1519',          'Ford',          'Truck', 20),\n('CARGO 1517', 'Ford Cargo 1517',          'Ford',          'Truck', 20),\n('CARGO 1419', 'Ford Cargo 1419',          'Ford',          'Truck', 20),\n('CARGO 1317', 'Ford Cargo 1317',          'Ford',          'Truck', 20),\n('17-230',     'VW Constellation 17-230',  'Volkswagen',    'Truck', 20),\n('17-210',     'VW Constellation 17-210',  'Volkswagen',    'Truck', 20),\n('17-180',     'VW Constellation 17-180',  'Volkswagen',    'Truck', 20),\n('16-200',     'VW Constellation 16-200',  'Volkswagen',    'Truck', 20),\n('15-190',     'VW Constellation 15-190',  'Volkswagen',    'Truck', 20),\n('15-180',     'VW Constellation 15-180',  'Volkswagen',    'Truck', 20),\n('14-210',     'VW Constellation 14-210',  'Volkswagen',    'Truck', 20),\n('14-190',     'VW Constellation 14-190',  'Volkswagen',    'Truck', 20),\n('14-180',     'VW Constellation 14-180',  'Volkswagen',    'Truck', 20),\n('14-170',     'VW Constellation 14-170',  'Volkswagen',    'Truck', 20),\n('13-180',     'VW Delivery 13-180',       'Volkswagen',    'Truck', 20),\n('12-170',     'VW Constellation 12-170',  'Volkswagen',    'Truck', 20),\n-- Prioridade 30: Tocos\n('ACCELO 1017', 'Mercedes-Benz Accelo 1017', 'Mercedes-Benz', 'Toco', 30),\n('ACCELO 1016', 'Mercedes-Benz Accelo 1016', 'Mercedes-Benz', 'Toco', 30),\n('ACCELO 915',  'Mercedes-Benz Accelo 915',  'Mercedes-Benz', 'Toco', 30),\n('ACCELO 817',  'Mercedes-Benz Accelo 817',  'Mercedes-Benz', 'Toco', 30),\n('ACCELO 815',  'Mercedes-Benz Accelo 815',  'Mercedes-Benz', 'Toco', 30),\n('CARGO 1119',  'Ford Cargo 1119',            'Ford',          'Toco', 30),\n('CARGO 815',   'Ford Cargo 815',             'Ford',          'Toco', 30),\n('CARGO 816',   'Ford Cargo 816',             'Ford',          'Toco', 30),\n('914',         'Mercedes-Benz 914',          'Mercedes-Benz', 'Toco', 30),\n('11-180',      'VW Delivery 11-180',         'Volkswagen',    'Toco', 30),\n('10-160',      'VW Delivery 10-160',         'Volkswagen',    'Toco', 30),\n('9-170',       'VW Delivery 9-170',          'Volkswagen',    'Toco', 30),\n('8-160',       'VW Delivery 8-160',          'Volkswagen',    'Toco', 30),\n('8-150',       'VW Delivery 8-150',          'Volkswagen',    'Toco', 30),\n('8-140',       'VW Delivery 8-140',          'Volkswagen',    'Toco', 30),\n('8-120',       'VW Delivery 8-120',          'Volkswagen',    'Toco', 30),\n-- Prioridade 40: 3/4 (Caminhões VUC / Urbanos)\n('ACCELO 715', 'Mercedes-Benz Accelo 715', 'Mercedes-Benz', '3/4', 40),\n('710',        'Mercedes-Benz 710',         'Mercedes-Benz', '3/4', 40),\n('6-160',      'VW Delivery 6-160',         'Volkswagen',    '3/4', 40),\n('HD80',       'Hyundai HD80',              'Hyundai',       '3/4', 40),\n('DAILY',      'Iveco Daily',               'Iveco',         '3/4', 40),\n('HR',         'Hyundai HR (VUC 3/4)',      'Hyundai',       '3/4', 40),\n('BONGO',      'Kia Bongo (VUC 3/4)',       'Kia',           '3/4', 40),\n-- Prioridade 50: Vans/Furgões Grandes (Pesado)\n('SPRINTER', 'Mercedes-Benz Sprinter', 'Mercedes-Benz',  'Pesado', 50),\n('MASTER',   'Renault Master',          'Renault',        'Pesado', 50),\n('DUCATO',   'Fiat Ducato',             'Fiat',           'Pesado', 50),\n('TRANSIT',  'Ford Transit',            'Ford',           'Pesado', 50),\n('TRAFIC',   'Chevrolet Trafic',        'GM - Chevrolet', 'Pesado', 50),\n('SCUDO',    'Fiat Scudo',              'Fiat',           'Pesado', 50),\n('BESTA',    'Kia Besta',               'Kia',            'Pesado', 50),\n('KOMBI',    'VW Kombi',                'Volkswagen',     'Pesado', 50),\n-- Prioridade 60: Pickups e Furgões Compactos (Médio)\n('FIORINO',  'Fiat Fiorino',            'Fiat',           'Médio', 60),\n('PARTNER',  'Peugeot Partner',         'Peugeot',        'Médio', 60),\n('STRADA',   'Fiat Strada',             'Fiat',           'Médio', 60),\n('SAVEIRO',  'VW Saveiro',              'Volkswagen',     'Médio', 60),\n('TORO',     'Fiat Toro',               'Fiat',           'Médio', 60),\n('OROCH',    'Renault Oroch',           'Renault',        'Médio', 60),\n('MONTANA',  'Chevrolet Montana',       'GM - Chevrolet', 'Médio', 60),\n('S10',      'Chevrolet S10',           'GM - Chevrolet', 'Médio', 60),\n('RANGER',   'Ford Ranger',             'Ford',           'Médio', 60),\n('L200',     'Mitsubishi L200',         'Mitsubishi',     'Médio', 60),\n('AMAROK',   'VW Amarok',               'Volkswagen',     'Médio', 60),\n('HILUX',    'Toyota Hilux',            'Toyota',         'Médio', 60),\n('FRONTIER', 'Nissan Frontier',         'Nissan',         'Médio', 60),\n-- Prioridade 65: Leves (Passeio / Hatch / Sedan)\n('POLO',     'VW Polo',            'Volkswagen',     'Leve',   65),\n('ARGO',     'Fiat Argo',          'Fiat',           'Leve',   65),\n('ONIX',     'Chevrolet Onix',     'GM - Chevrolet', 'Leve',   65),\n('HB20',     'Hyundai HB20',       'Hyundai',        'Leve',   65),\n('GOL',      'VW Gol',             'Volkswagen',     'Leve',   65),\n('UNO',      'Fiat Uno',           'Fiat',           'Leve',   65),\n('MOBI',     'Fiat Mobi',          'Fiat',           'Leve',   65),\n('KA',       'Ford Ka',            'Ford',           'Leve',   65),\n('COROLLA',  'Toyota Corolla',     'Toyota',         'Leve',   65),\n('CIVIC',    'Honda Civic',        'Honda',          'Leve',   65),\n('SANDERO',  'Renault Sandero',    'Renault',        'Leve',   65),\n('LOGAN',    'Renault Logan',      'Renault',        'Leve',   65),\n('PALIO',    'Fiat Palio',         'Fiat',           'Leve',   65),\n('CELTA',    'Chevrolet Celta',    'GM - Chevrolet', 'Leve',   65),\n('CORSA',    'Chevrolet Corsa',    'GM - Chevrolet', 'Leve',   65),\n('FIESTA',   'Ford Fiesta',        'Ford',           'Leve',   65),\n('C3',       'Citroën C3',         'Citroën',        'Leve',   65),\n('CRETA',    'Hyundai Creta',      'Hyundai',        'Leve',   65),\n('RENEGADE', 'Jeep Renegade',      'Jeep',           'Leve',   65),\n('COMPASS',  'Jeep Compass',       'Jeep',           'Leve',   65),\n('TRACKER',  'Chevrolet Tracker',  'GM - Chevrolet', 'Leve',   65),\n('T-CROSS',  'VW T-Cross',         'Volkswagen',     'Leve',   65),\n('NIVUS',    'VW Nivus',           'Volkswagen',     'Leve',   65),\n('VOYAGE',   'VW Voyage',          'Volkswagen',     'Leve',   65),\n('VIRTUS',   'VW Virtus',          'Volkswagen',     'Leve',   65),\n('CRONOS',   'Fiat Cronos',        'Fiat',           'Leve',   65),\n('SPIN',     'Chevrolet Spin',     'GM - Chevrolet', 'Leve',   65),\n('PRISMA',   'Chevrolet Prisma',   'GM - Chevrolet', 'Leve',   65),\n-- Prioridade 70: Motos\n('CG', 'Honda CG', 'Honda', 'Moto', 70)\nON CONFLICT (padrao) DO UPDATE SET\n  modelo_simples = EXCLUDED.modelo_simples,\n  marca          = EXCLUDED.marca,\n  grupo_veiculo  = EXCLUDED.grupo_veiculo,\n  prioridade     = EXCLUDED.prioridade;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        80,
+        0
+      ],
+      "id": "a1b2c3d4-0004-4000-8000-000000000004",
+      "name": "Inserir Padrões",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT modelo, torre.gold_classificar_veiculo(modelo) AS grupo_classificado\nFROM (VALUES\n  ('30-330 CONSTELLATION 8X2 2P (DIESEL)(E5)'),\n  ('VM 330 8X2 2P (DIESEL) (E5)'),\n  ('SPRINTER 417 FURGÃO L.T.A. DIESEL (E6)'),\n  ('ARGO DRIVE 1.0 6V FLEX'),\n  ('STRADA ENDURANCE 1.3 FLEX 8V CS'),\n  ('CG 160 START'),\n  ('POLO 1.0 MPI FLEX 12V 5P'),\n  ('DOBLO  CARGO 1.4 MPI FIRE FLEX 8V 3P'),\n  ('ACCELO 1016 2P (DIESEL) (E5)'),\n  ('17-230 WORKER 2P (DIESEL)(E5)'),\n  ('HR 2.5 TCI DIESEL (RS/RD)'),\n  ('HR-V EXL 1.8 FLEXONE 16V 5P AUT.')\n) AS t(modelo);",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        320,
+        0
+      ],
+      "id": "a1b2c3d4-0004-4000-8000-000000000005",
+      "name": "Testar Função",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT grupo_veiculo, COUNT(*) AS padroes FROM torre.gold_dim_modelo_veiculo GROUP BY grupo_veiculo ORDER BY grupo_veiculo;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        560,
+        0
+      ],
+      "id": "a1b2c3d4-0004-4000-8000-000000000006",
+      "name": "Validar Resultado",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Executar Manualmente": {
+      "main": [
+        [
+          {
+            "node": "Criar Tabela",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Criar Tabela": {
+      "main": [
+        [
+          {
+            "node": "Criar Função",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Criar Função": {
+      "main": [
+        [
+          {
+            "node": "Inserir Padrões",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Inserir Padrões": {
+      "main": [
+        [
+          {
+            "node": "Testar Função",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Testar Função": {
+      "main": [
+        [
+          {
+            "node": "Validar Resultado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "a1b2c3d4-0004-4000-8000-000000000000",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fb581638443806838dcc4ad5d9ab57cd83fc9fe2e7f923a0752e9d8321c3faf5"
+  },
+  "id": "GOLD003dimModeloVeiculo",
+  "tags": [
+    {
+      "name": "gold"
+    },
+    {
+      "name": "setup"
+    },
+    {
+      "name": "torre-de-controle"
+    }
+  ]
+}

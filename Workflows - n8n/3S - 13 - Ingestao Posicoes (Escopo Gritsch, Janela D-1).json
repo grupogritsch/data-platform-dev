@@ -1,0 +1,475 @@
+{
+  "name": "3S - 13 - Ingestao Posicoes (Escopo Gritsch, Janela D-1)",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "20 6 * * *"
+            }
+          ]
+        }
+      },
+      "id": "5869048a-ace6-432a-973f-508d987cdc9e",
+      "name": "00 - Diario 06:20",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT v.id_equipamento, v.id_veiculo,\n       to_char(CURRENT_DATE - 1, 'YYYY-MM-DD') || 'T00:00:00' AS data_inicio,\n       to_char(CURRENT_DATE - 1, 'YYYY-MM-DD') || 'T23:59:59' AS data_fim\n  FROM bronze.tres_s_veiculos v\n WHERE upper(regexp_replace(coalesce(v.placa,''), '[\\s-]', '', 'g'))\n       IN (SELECT placa FROM silver.dim_veiculo);",
+        "options": {}
+      },
+      "id": "2cdc811e-077d-4e1a-a3d8-92c3b9eb7037",
+      "name": "01 - Lista Veiculos Gritsch na 3S",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        220,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "9a62dd53-8e25-47cb-af61-541f0d2b7abd",
+      "name": "02 - Loop 1 a 1 (rate limit)",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        440,
+        0
+      ],
+      "notes": "Saida 0 = DONE (lista esgotada) -> 10 - Deriva Eventos e Expurga. Saida 1 = LOOP (item atual) -> Aquece Sessao 3S. Ordem confirmada no codigo-fonte do n8n (SplitInBatchesV3, outputNames: ['done','loop'])."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://3stecnologia.eti.br/dataexportapi/ValidaLogin",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept-Encoding",
+              "value": "identity"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "{\"usuario\": \"referencia.locadora919\", \"senha\": \"d01m04\"}"
+      },
+      "id": "a5c50686-c907-4ea5-92ec-4b23e299e669",
+      "name": "Aquece Sessao 3S",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        -40
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput",
+      "notes": "Credenciais reais ja preenchidas a partir do .env do data-platform-dev. Este arquivo contem SENHA — 'Workflows - n8n/' esta no .gitignore por isso."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://3stecnologia.eti.br/dataexportapi/ValidaLogin",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept-Encoding",
+              "value": "identity"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "{\"usuario\": \"referencia.locadora919\", \"senha\": \"d01m04\"}"
+      },
+      "id": "813973e4-1616-45d2-84ba-d301174ffdfb",
+      "name": "03 - Login",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        100
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notes": "Credenciais reais ja preenchidas a partir do .env do data-platform-dev. Este arquivo contem SENHA — 'Workflows - n8n/' esta no .gitignore por isso."
+    },
+    {
+      "parameters": {
+        "jsCode": "const t = $json.token;\n\n// Defeito REAL da API da 3S (medido 21/08/2026): apos periodo ocioso o\n// ValidaLogin as vezes devolve HTTP 200 com token de SESSAO VELHO ja vencido —\n// hex de 32 chars em vez de JWT. Foi o que derrubou as execucoes agendadas de\n// 20 e 21/08 com \"Authorization failed\" no node seguinte. Aqui vira erro\n// claro, no lugar certo.\nif (!t || typeof t !== 'string') {\n  throw new Error('[3S] Login nao devolveu token. Corpo: ' + JSON.stringify($json).slice(0, 200));\n}\nif (!t.startsWith('eyJ')) {\n  throw new Error('[3S] Login devolveu token invalido (esperado JWT, veio ' + t.length +\n    ' chars: \"' + t.slice(0, 16) + '...\"). Defeito de cache da 3S — o login de ' +\n    'aquecimento nao resolveu desta vez. Reexecutar costuma bastar.');\n}\n\n// VALIDADE: le o claim \"exp\" de DENTRO do JWT (epoch em segundos, UTC, sem\n// ambiguidade de fuso).\n//\n// NAO usar o campo \"expiration\" do corpo da resposta: ele vem em horario LOCAL\n// (BRT) e SEM sufixo de fuso, e o new Date() do Node interpreta string ISO sem\n// fuso como hora do SERVIDOR. Com o n8n em UTC, um token valido ate 11:03 BRT\n// (= 14:03 UTC) era lido como vencido as 11:03 UTC — falso positivo de 3h que\n// derrubou o 3S-10 em 21/08/2026. Confirmado antes: o claim exp do JWT marcava\n// 14:38 UTC enquanto o corpo dizia 11:38.\n//\n// Se por algum motivo nao der para decodificar, segue SEM checar validade: o\n// risco de barrar token bom e pior que o de deixar passar um vencido, porque\n// vencido falha logo adiante com erro claro da propria API.\nlet expSeg = null;\ntry {\n  const payload = JSON.parse(Buffer.from(t.split('.')[1], 'base64').toString('utf8'));\n  if (payload && payload.exp) expSeg = Number(payload.exp);\n} catch (e) { /* segue sem checar */ }\n\nif (expSeg && expSeg * 1000 <= Date.now()) {\n  throw new Error('[3S] Login devolveu JWT ja vencido (exp=' +\n    new Date(expSeg * 1000).toISOString() + ', agora=' + new Date().toISOString() +\n    '). Defeito de cache da 3S.');\n}\n\nreturn [{ json: { token: t, expiration: $json.expiration } }];"
+      },
+      "id": "ab350425-0dda-423f-9079-5a81217e0ffe",
+      "name": "Valida Token",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://3stecnologia.eti.br/dataexportapi/HistoricoPosicao",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Valida Token').first().json.token }}"
+            },
+            {
+              "name": "Accept-Encoding",
+              "value": "identity"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ idVeiculo: $('02 - Loop 1 a 1 (rate limit)').first().json.id_veiculo, dataInicio: $('02 - Loop 1 a 1 (rate limit)').first().json.data_inicio, dataFim: $('02 - Loop 1 a 1 (rate limit)').first().json.data_fim }) }}"
+      },
+      "id": "92e87038-c3dc-4c88-b5a8-95e00a7fbd16",
+      "name": "04 - Request HistoricoPosicao",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        100
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO bronze.tres_s_raw_response\n  (metodo, params, http_status, sucesso, tamanho_bytes, response_corpo, erro_msg)\nVALUES ('HistoricoPosicao', $2::jsonb,\n        CASE WHEN coalesce($1,'') = '' OR $1 LIKE '3S.%'\n                  OR $1 LIKE '%ErroProcessamento%' THEN 404 ELSE 200 END,\n        (coalesce($1,'') <> '' AND $1 NOT LIKE '3S.%'\n         AND $1 NOT LIKE '%ErroProcessamento%'),\n        length(coalesce($1,'')),\n        coalesce($1,''),\n        CASE WHEN coalesce($1,'') = ''\n                  THEN 'corpo vazio - veiculo sem posicao na janela'\n             WHEN $1 LIKE '3S.%' OR $1 LIKE '%ErroProcessamento%'\n                  THEN left($1, 500) END)\nRETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [ $('04 - Request HistoricoPosicao').item.json.data, JSON.stringify({ idVeiculo: $('02 - Loop 1 a 1 (rate limit)').first().json.id_veiculo }) ] }}"
+        }
+      },
+      "id": "1fd0a7d0-9f24-4772-a01f-6c13dd4993b0",
+      "name": "05 - Grava Raw Response",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1100,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "notes": "NAO TESTADO nesta versao exata: 'Query Parameters' (campo options.queryReplacement) deve ser uma expressao que retorna um ARRAY, ex. {{ [ valor1, valor2 ] }} — mapeia para $1, $2... na query. Confirmado na documentacao oficial do n8n. Se o import reclamar deste campo, avise imediatamente."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, response_corpo FROM bronze.tres_s_raw_response WHERE id = $1;",
+        "options": {
+          "queryReplacement": "={{ [ $json.id ] }}"
+        }
+      },
+      "id": "268474fc-b218-4b3f-8aa6-021fb04f2d77",
+      "name": "06 - Le Raw Response",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1320,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "jsCode": "const { response_corpo, id } = $json;\nconst idEquipamento = $('02 - Loop 1 a 1 (rate limit)').first().json.id_equipamento;\n\n// Veiculo sem posicao na janela: a 3S responde 404 + texto puro\n// \"3S.1003 - Posicao de Veiculos nao encontrados.\". MAS o node HTTP do n8n,\n// com neverError ligado, as vezes entrega esse corpo como NULL. Por isso\n// corpo vazio TAMBEM e tratado como \"sem posicao\" — situacao NORMAL nesta\n// frota (veiculo parado), que nao pode derrubar o loop.\nconst txt = String(response_corpo ?? '').trim();\nif (txt === '' || /^3S\\.1003\\b/.test(txt)) {\n  return [{ json: { records: [], rawId: id, idEquipamento, total: 0, semPosicao: true } }];\n}\n\n// Erro em TEXTO PURO que nao seja 1003 = problema de verdade.\nif (/^3S\\.\\d{3,5}\\b/.test(txt)) {\n  throw new Error('[3S] HistoricoPosicao falhou para idEquipamento=' + idEquipamento +\n    ': ' + txt.slice(0, 200));\n}\n\nconst records = JSON.parse(response_corpo);\n\n// A 3S erra de DUAS formas. Alem do texto puro tratado acima, existe a forma\n// JSON (Content-Type application/json):\n//     [{\"ErroProcessamento\":\"3S.1039 - Sessao expirada.\"}]\n// Essa nao comeca com \"3S.\", parseia como array valido, e por isso passava\n// como sucesso carregando zero linhas EM SILENCIO — foi assim que ~100\n// veiculos se perderam sem ninguem notar em 20/08/2026.\nif (Array.isArray(records) && records.length > 0 && records[0] && records[0].ErroProcessamento) {\n  const msg = String(records[0].ErroProcessamento);\n  if (/^3S\\.1003\\b/.test(msg)) {\n    return [{ json: { records: [], rawId: id, idEquipamento, total: 0, semPosicao: true } }];\n  }\n  throw new Error('[3S] HistoricoPosicao falhou para idEquipamento=' + idEquipamento +\n    ': ' + msg);\n}\n\nif (Array.isArray(records) && records.length > 0 &&\n    records.every(r => !r || Object.keys(r).length === 0)) {\n  throw new Error('[3S] Resposta sem conteudo util: array contendo apenas objetos vazios ' +\n    '(ex.: [{}]). Sintoma classico de token quebrado no header Authorization.');\n}\nreturn [{ json: { records: Array.isArray(records) ? records : [], rawId: id, idEquipamento,\n  total: Array.isArray(records) ? records.length : 0 } }];"
+      },
+      "id": "0de75f11-b214-4fba-8e1c-ba71ca6abed8",
+      "name": "07 - Parse Records",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT bronze.fn_carrega_posicoes($1::jsonb, $2::text, $3::bigint) AS linhas;",
+        "options": {
+          "queryReplacement": "={{ [ JSON.stringify($json.records), $json.idEquipamento, $json.rawId ] }}"
+        }
+      },
+      "id": "17baded1-a259-4216-9284-4304800f6032",
+      "name": "08 - Carrega Posicoes",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1760,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "amount": 9.0,
+        "unit": "seconds"
+      },
+      "id": "22be5476-60ae-4212-bc95-6c939a92e5b9",
+      "name": "09 - Aguarda 9s (limite 10/min)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1980,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Rede de seguranca contra perda SILENCIOSA de dados.\n-- O parse tolera corpo vazio (veiculo parado e normal nesta frota). Se\n-- NENHUMA chamada da execucao trouxe dado, e improvavel que a frota inteira\n-- esteja parada — muito mais provavel que a autenticacao tenha caido.\nDO $ck$\nDECLARE v_total INT; v_com_dado INT;\nBEGIN\n    SELECT count(*), count(*) FILTER (WHERE sucesso)\n      INTO v_total, v_com_dado\n      FROM bronze.tres_s_raw_response\n     WHERE metodo = 'HistoricoPosicao'\n       AND recebido_em > NOW() - INTERVAL '30 minutes';\n\n    IF v_total >= 5 AND v_com_dado = 0 THEN\n        RAISE EXCEPTION\n          '[3S] Todas as % chamadas de HistoricoPosicao desta execucao vieram '\n          'vazias. Improvavel que a frota inteira esteja parada — suspeite de '\n          'token expirado ou permissao revogada. Nenhuma posicao foi carregada.',\n          v_total;\n    END IF;\nEND $ck$;\n\nSELECT silver.fn_deriva_eventos_velocidade(CURRENT_DATE - 1, CURRENT_DATE - 1);\nSELECT bronze.fn_expurga_posicoes(30);",
+        "options": {}
+      },
+      "id": "21ba0e64-6099-456b-b950-ca94836a690c",
+      "name": "10 - Deriva Eventos e Expurga",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        440,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    }
+  ],
+  "connections": {
+    "00 - Diario 06:20": {
+      "main": [
+        [
+          {
+            "node": "01 - Lista Veiculos Gritsch na 3S",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "01 - Lista Veiculos Gritsch na 3S": {
+      "main": [
+        [
+          {
+            "node": "02 - Loop 1 a 1 (rate limit)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aquece Sessao 3S": {
+      "main": [
+        [
+          {
+            "node": "03 - Login",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "03 - Login": {
+      "main": [
+        [
+          {
+            "node": "Valida Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valida Token": {
+      "main": [
+        [
+          {
+            "node": "04 - Request HistoricoPosicao",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "04 - Request HistoricoPosicao": {
+      "main": [
+        [
+          {
+            "node": "05 - Grava Raw Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "05 - Grava Raw Response": {
+      "main": [
+        [
+          {
+            "node": "06 - Le Raw Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "06 - Le Raw Response": {
+      "main": [
+        [
+          {
+            "node": "07 - Parse Records",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "07 - Parse Records": {
+      "main": [
+        [
+          {
+            "node": "08 - Carrega Posicoes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "08 - Carrega Posicoes": {
+      "main": [
+        [
+          {
+            "node": "09 - Aguarda 9s (limite 10/min)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "09 - Aguarda 9s (limite 10/min)": {
+      "main": [
+        [
+          {
+            "node": "02 - Loop 1 a 1 (rate limit)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "02 - Loop 1 a 1 (rate limit)": {
+      "main": [
+        [
+          {
+            "node": "10 - Deriva Eventos e Expurga",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Aquece Sessao 3S",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

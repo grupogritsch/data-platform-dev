@@ -1,0 +1,131 @@
+{
+  "name": "GOLD - 21 - MV Atividade Frota Mensal",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -640,
+        0
+      ],
+      "id": "a1b2c3d4-0021-4000-8000-000000000001",
+      "name": "Executar Manualmente"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -640,
+        200
+      ],
+      "id": "a1b2c3d4-0021-4000-8000-000000000002",
+      "name": "Refresh Diário"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Recria a MV com a definição mais recente\nDROP MATERIALIZED VIEW IF EXISTS torre.gold_mv_atividade_frota_mensal CASCADE;\n\nCREATE MATERIALIZED VIEW torre.gold_mv_atividade_frota_mensal AS\nWITH atividade_filial AS (\n  SELECT\n    TO_CHAR(data, 'YYYY-MM')                                                         AS ano_mes,\n    EXTRACT(YEAR  FROM data)::int                                                    AS ano,\n    EXTRACT(MONTH FROM data)::int                                                    AS mes,\n    placa,\n    filial_nome,\n    filial_estado,\n    filial_regiao,\n    grupo_veiculo,\n    COUNT(*)                                                                         AS qtd_abastecimentos,\n    ROUND(SUM(litragem)::numeric, 2)                                                 AS total_litros,\n    ROUND(SUM(valor_liquido)::numeric, 2)                                            AS total_valor_liquido,\n    ROUND((SUM(valor_liquido) / NULLIF(SUM(litragem), 0))::numeric, 3)              AS preco_medio_litro,\n    MAX(data)                                                                        AS ultima_data_abastecimento,\n    MIN(data)                                                                        AS primeira_data_abastecimento,\n    COUNT(DISTINCT cnpj_posto)                                                       AS qtd_postos_distintos,\n    MIN(hodometro) FILTER (WHERE hodometro > 0)                                      AS hodometro_inicial,\n    MAX(hodometro) FILTER (WHERE hodometro > 0)                                      AS hodometro_final\n  FROM torre.gold_truckpag_combustivel\n  WHERE NOT transacao_estornada\n    AND filial_nome IS NOT NULL\n    AND grupo_combustivel <> 'Arla'\n  GROUP BY 1, 2, 3, 4, 5, 6, 7, 8\n),\natividade_placa AS (\n  SELECT\n    ano_mes,\n    placa,\n    LAG(ano_mes) OVER (PARTITION BY placa ORDER BY ano_mes) AS ano_mes_anterior,\n    SUM(qtd_abastecimentos) OVER (\n      PARTITION BY placa ORDER BY ano_mes\n      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW\n    ) AS qtd_abastecimentos_acumulado,\n    COUNT(*) OVER (\n      PARTITION BY placa ORDER BY ano_mes\n      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW\n    ) AS meses_com_dados\n  FROM (\n    SELECT ano_mes, placa, SUM(qtd_abastecimentos) AS qtd_abastecimentos\n    FROM atividade_filial\n    GROUP BY ano_mes, placa\n  ) t\n)\nSELECT\n  af.ano_mes,\n  af.ano,\n  af.mes,\n  af.placa,\n  af.filial_nome,\n  af.filial_estado,\n  af.filial_regiao,\n  af.grupo_veiculo,\n  af.qtd_abastecimentos,\n  af.total_litros,\n  af.total_valor_liquido,\n  af.preco_medio_litro,\n  af.hodometro_inicial,\n  af.hodometro_final,\n  -- km percorrido: MIN/MAX do mês na filial (Opção B)\n  CASE\n    WHEN af.hodometro_final   IS NOT NULL\n     AND af.hodometro_inicial IS NOT NULL\n     AND af.hodometro_final > af.hodometro_inicial\n     AND (af.hodometro_final - af.hodometro_inicial) < 50000\n    THEN (af.hodometro_final - af.hodometro_inicial)\n    ELSE NULL\n  END                                                                                AS km_percorrido,\n  -- Eficiência: km por litro\n  CASE\n    WHEN af.hodometro_final   IS NOT NULL\n     AND af.hodometro_inicial IS NOT NULL\n     AND af.hodometro_final > af.hodometro_inicial\n     AND (af.hodometro_final - af.hodometro_inicial) < 50000\n     AND af.total_litros > 0\n    THEN ROUND(((af.hodometro_final - af.hodometro_inicial) / af.total_litros)::numeric, 2)\n    ELSE NULL\n  END                                                                                AS km_por_litro,\n  -- Custo por km rodado\n  CASE\n    WHEN af.hodometro_final   IS NOT NULL\n     AND af.hodometro_inicial IS NOT NULL\n     AND af.hodometro_final > af.hodometro_inicial\n     AND (af.hodometro_final - af.hodometro_inicial) < 50000\n    THEN ROUND((af.total_valor_liquido / (af.hodometro_final - af.hodometro_inicial))::numeric, 3)\n    ELSE NULL\n  END                                                                                AS custo_por_km,\n  af.ultima_data_abastecimento,\n  af.primeira_data_abastecimento,\n  af.qtd_postos_distintos,\n  ap.meses_com_dados,\n  ap.qtd_abastecimentos_acumulado,\n  -- Continuidade no veículo\n  CASE\n    WHEN ap.ano_mes_anterior IS NULL\n      THEN 'PRIMEIRO_REGISTRO'\n    WHEN ap.ano_mes_anterior = TO_CHAR(\n      (TO_DATE(af.ano_mes, 'YYYY-MM') - INTERVAL '1 month'), 'YYYY-MM'\n    ) THEN 'CONTINUO'\n    ELSE 'RETORNO_APOS_GAP'\n  END                                                                                AS status_continuidade\nFROM atividade_filial af\nLEFT JOIN atividade_placa ap ON af.placa = ap.placa AND af.ano_mes = ap.ano_mes\nWITH DATA;\n\nCREATE INDEX idx_mv_atividade_frota_placa\n  ON torre.gold_mv_atividade_frota_mensal (placa);\nCREATE INDEX idx_mv_atividade_frota_ano_mes\n  ON torre.gold_mv_atividade_frota_mensal (ano_mes);\nCREATE INDEX idx_mv_atividade_frota_filial\n  ON torre.gold_mv_atividade_frota_mensal (filial_nome);\nCREATE INDEX idx_mv_atividade_frota_status\n  ON torre.gold_mv_atividade_frota_mensal (status_continuidade);\nCREATE INDEX idx_mv_atividade_frota_km\n  ON torre.gold_mv_atividade_frota_mensal (km_percorrido);\n\nSELECT 'MV gold_mv_atividade_frota_mensal criada' AS status;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -400,
+        100
+      ],
+      "id": "a1b2c3d4-0021-4000-8000-000000000010",
+      "name": "Criar MV",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  COUNT(*)                                                          AS linhas,\n  COUNT(DISTINCT placa)                                             AS veiculos,\n  COUNT(DISTINCT ano_mes)                                           AS meses,\n  COUNT(*) FILTER (WHERE status_continuidade = 'CONTINUO')         AS continuo,\n  COUNT(*) FILTER (WHERE status_continuidade = 'RETORNO_APOS_GAP') AS retorno_apos_gap,\n  COUNT(*) FILTER (WHERE status_continuidade = 'PRIMEIRO_REGISTRO') AS primeiro_registro,\n  ROUND(AVG(qtd_abastecimentos)::numeric, 2)                       AS media_abastec_por_veiculo_mes,\n  ROUND(AVG(total_litros)::numeric, 2)                             AS media_litros_por_veiculo_mes\nFROM torre.gold_mv_atividade_frota_mensal\nWHERE ano_mes >= TO_CHAR(CURRENT_DATE - INTERVAL '3 months', 'YYYY-MM');\n\n-- Veículos com gap no último mês (presentes no mês anterior mas não no atual)\nSELECT COUNT(DISTINCT placa) AS veiculos_com_gap_recente\nFROM torre.gold_mv_atividade_frota_mensal\nWHERE ano_mes = TO_CHAR(CURRENT_DATE - INTERVAL '1 month', 'YYYY-MM')\n  AND placa NOT IN (\n    SELECT DISTINCT placa FROM torre.gold_mv_atividade_frota_mensal\n    WHERE ano_mes = TO_CHAR(CURRENT_DATE, 'YYYY-MM')\n  );",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -160,
+        100
+      ],
+      "id": "a1b2c3d4-0021-4000-8000-000000000011",
+      "name": "Validar",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Executar Manualmente": {
+      "main": [
+        [
+          {
+            "node": "Criar MV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refresh Diário": {
+      "main": [
+        [
+          {
+            "node": "Criar MV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Criar MV": {
+      "main": [
+        [
+          {
+            "node": "Validar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "a1b2c3d4-0021-4000-8000-000000000000",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fb581638443806838dcc4ad5d9ab57cd83fc9fe2e7f923a0752e9d8321c3faf5"
+  },
+  "id": "GOLD0021AtividadeFrota",
+  "tags": [
+    {
+      "name": "gold"
+    },
+    {
+      "name": "torre-de-controle"
+    }
+  ]
+}

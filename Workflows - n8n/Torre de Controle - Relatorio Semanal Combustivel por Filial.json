@@ -1,0 +1,196 @@
+{
+  "name": "Torre de Controle - Relatorio Semanal Combustivel por Filial",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-1200, 300],
+      "id": "rel-comb-manual-0001",
+      "name": "Executar Manualmente"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 7 * * 1"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [-1200, 500],
+      "id": "rel-comb-sched-0002",
+      "name": "Disparo Semanal (Segunda 07h)"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "param-modo-producao",
+              "name": "modo_producao",
+              "value": false,
+              "type": "boolean"
+            },
+            {
+              "id": "param-email-teste",
+              "name": "email_teste",
+              "value": "gabriel.brittes@gritsch.com.br",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-960, 400],
+      "id": "rel-comb-config-0003",
+      "name": "⚙️ Configurações"
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $('⚙️ Configurações').first().json;\n\nconst agora = new Date();\nconst dow = agora.getDay();\nconst recuo = (dow === 0 ? 6 : dow - 1) + 7;\n\nconst seg = new Date(agora);\nseg.setDate(agora.getDate() - recuo);\nconst dom = new Date(seg);\ndom.setDate(seg.getDate() + 6);\n\nconst fmtPG = (d) => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');\nconst fmtLabel = (d) => String(d.getDate()).padStart(2,'0') + '/' + String(d.getMonth()+1).padStart(2,'0') + '/' + d.getFullYear();\n\nreturn [{\n  json: {\n    start_date: fmtPG(seg),\n    end_date: fmtPG(dom),\n    dataRef: fmtLabel(seg) + ' a ' + fmtLabel(dom),\n    modo_producao: cfg.modo_producao,\n    email_teste: cfg.email_teste\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-720, 400],
+      "id": "rel-comb-periodo-0004",
+      "name": "Calcular Período"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH base_tx AS (\n  SELECT\n    c.transacao,\n    c.placa,\n    c.data,\n    c.data_transacao,\n    c.hodometro,\n    c.litragem,\n    c.valor_liquido,\n    c.grupo_combustivel,\n    c.garagem,\n    CASE \n      WHEN c.garagem IN ('GRITSCH - CWB (BASE)', 'GRITSCH - CWB (ECT)') THEN 'Gritsch Curitiba (Base)'\n      WHEN c.garagem = 'GRITSCH - MATRIZ' THEN 'Gritsch Curitiba (Matriz)'\n      WHEN c.garagem = 'GRITSCH - CWB (DIR)' THEN 'Gritsch Curitiba (Diretoria)'\n      ELSE c.filial_nome\n    END AS filial_relatorio\n  FROM torre.gold_truckpag_combustivel c\n  WHERE NOT c.transacao_estornada\n    AND c.grupo_combustivel NOT IN ('Arla', 'Outros')\n    AND c.data BETWEEN '{{ $json.start_date }}' AND '{{ $json.end_date }}'\n),\n-- ============================================================\n-- PARTE 1: FINANCEIRO (SEMPRE inclui tudo, sem filtro de hodômetro)\n-- Litros e R$ nunca são descartados.\n-- ============================================================\ncombustivel_filial AS (\n  SELECT\n    filial_relatorio,\n    ROUND(SUM(CASE WHEN grupo_combustivel = 'Gasolina' THEN litragem ELSE 0 END)::numeric, 2)       AS litros_gasolina,\n    ROUND(SUM(CASE WHEN grupo_combustivel = 'Gasolina' THEN valor_liquido ELSE 0 END)::numeric, 2)  AS valor_gasolina,\n    ROUND(SUM(CASE WHEN grupo_combustivel = 'Diesel' THEN litragem ELSE 0 END)::numeric, 2)         AS litros_diesel,\n    ROUND(SUM(CASE WHEN grupo_combustivel = 'Diesel' THEN valor_liquido ELSE 0 END)::numeric, 2)    AS valor_diesel,\n    ROUND(SUM(CASE WHEN grupo_combustivel = 'Álcool' THEN litragem ELSE 0 END)::numeric, 2)         AS litros_alcool,\n    ROUND(SUM(CASE WHEN grupo_combustivel = 'Álcool' THEN valor_liquido ELSE 0 END)::numeric, 2)    AS valor_alcool,\n    ROUND(SUM(litragem)::numeric, 2)        AS total_litros,\n    ROUND(SUM(valor_liquido)::numeric, 2)   AS total_valor,\n    COUNT(DISTINCT placa)                   AS qtd_veiculos\n  FROM base_tx\n  WHERE filial_relatorio IS NOT NULL\n  GROUP BY filial_relatorio\n),\n-- ============================================================\n-- PARTE 2: KM (validado — hodômetros ruins são PULADOS,\n-- litros desses abastecimentos ficam incluídos no total acima)\n--\n-- Lógica MIN/MAX: pega o primeiro e último hodômetro VÁLIDO\n-- da semana. Abastecimentos com hod errado no meio são\n-- ignorados no cálculo de KM, mas seus litros e R$ SEMPRE\n-- contam na Parte 1.\n-- ============================================================\nkm_bruto AS (\n  SELECT\n    b.filial_relatorio,\n    b.placa,\n    v.grupo_veiculo,\n    -- MIN/MAX dos hodômetros válidos (pula leituras ruins)\n    MIN(b.hodometro) FILTER (WHERE b.hodometro > 0) AS hod_min,\n    MAX(b.hodometro) FILTER (WHERE b.hodometro > 0) AS hod_max,\n    COUNT(*) FILTER (WHERE b.hodometro > 0)         AS qtd_leituras_validas,\n    -- Total de litros do veículo (para validação de km/L)\n    SUM(b.litragem)                                 AS litros_veiculo\n  FROM base_tx b\n  LEFT JOIN torre.gold_dim_veiculo v ON v.placa = b.placa\n  WHERE b.filial_relatorio IS NOT NULL\n  GROUP BY b.filial_relatorio, b.placa, v.grupo_veiculo\n),\n-- Validação em 3 camadas:\n--   1) MAX > MIN e pelo menos 2 leituras válidas\n--   2) KM <= 5.000 na semana (cap de sanidade)\n--   3) km/L <= referência × 2.0 (fisicamente possível)\nkm_validado AS (\n  SELECT\n    kb.filial_relatorio,\n    kb.placa,\n    kb.grupo_veiculo,\n    (kb.hod_max - kb.hod_min) AS km_bruto,\n    kb.litros_veiculo,\n    bm.km_l_ref,\n    -- km/L calculado para este veículo\n    ROUND(((kb.hod_max - kb.hod_min)::numeric / NULLIF(kb.litros_veiculo, 0)), 2) AS km_l_calc,\n    -- Resultado final: aplica as 3 camadas de validação\n    CASE\n      -- Camada 1: precisa de pelo menos 2 leituras válidas e MAX > MIN\n      WHEN kb.qtd_leituras_validas < 2 THEN NULL\n      WHEN kb.hod_max <= kb.hod_min    THEN NULL\n      -- Camada 2: cap de 5.000 km na semana\n      WHEN (kb.hod_max - kb.hod_min) > 5000 THEN NULL\n      -- Camada 3: mínimo 50 km para base estatística\n      WHEN (kb.hod_max - kb.hod_min) < 50 THEN NULL\n      -- Camada 4: km/L fisicamente possível (até 2× a referência do grupo)\n      -- Se km/L > ref × 2.0, o hodômetro está errado (não é eficiência real)\n      WHEN bm.km_l_ref IS NOT NULL\n       AND kb.litros_veiculo > 0\n       AND ((kb.hod_max - kb.hod_min)::numeric / kb.litros_veiculo) > (bm.km_l_ref * 2.0)\n      THEN NULL\n      -- Passou em tudo: KM válido!\n      ELSE (kb.hod_max - kb.hod_min)\n    END AS km_validado\n  FROM km_bruto kb\n  -- JOIN com benchmark: usa o combustível predominante do veículo\n  LEFT JOIN torre.ref_benchmark_km_l bm\n    ON bm.grupo_veiculo = kb.grupo_veiculo\n    AND bm.grupo_combustivel = (\n      SELECT b2.grupo_combustivel\n      FROM base_tx b2\n      WHERE b2.placa = kb.placa\n      GROUP BY b2.grupo_combustivel\n      ORDER BY SUM(b2.litragem) DESC\n      LIMIT 1\n    )\n),\nkm_filial AS (\n  SELECT\n    filial_relatorio,\n    COALESCE(SUM(km_validado), 0)                                          AS total_km,\n    COUNT(DISTINCT placa) FILTER (WHERE km_validado IS NOT NULL)            AS veiculos_com_km,\n    COUNT(DISTINCT placa) FILTER (WHERE km_validado IS NULL AND km_bruto IS NOT NULL) AS veiculos_km_descartado\n  FROM km_validado\n  GROUP BY filial_relatorio\n)\nSELECT\n  cf.filial_relatorio                                                    AS filial_nome,\n  COALESCE(kf.total_km, 0)                                               AS total_km,\n  cf.qtd_veiculos,\n  COALESCE(kf.veiculos_com_km, 0)                                         AS veiculos_com_km,\n  cf.litros_gasolina,\n  cf.valor_gasolina,\n  cf.litros_diesel,\n  cf.valor_diesel,\n  cf.litros_alcool,\n  cf.valor_alcool,\n  cf.total_litros,\n  cf.total_valor,\n  -- Custo por KM: valor total ÷ KM validado\n  CASE WHEN COALESCE(kf.total_km, 0) > 0\n    THEN ROUND((cf.total_valor / kf.total_km)::numeric, 2)\n    ELSE NULL\n  END                                                                     AS custo_por_km,\n  -- KM/L: KM validado ÷ litros totais\n  CASE WHEN cf.total_litros > 0 AND COALESCE(kf.total_km, 0) > 0\n    THEN ROUND((kf.total_km / cf.total_litros)::numeric, 2)\n    ELSE NULL\n  END                                                                     AS km_por_litro\nFROM combustivel_filial cf\nLEFT JOIN km_filial kf ON kf.filial_relatorio = cf.filial_relatorio\nWHERE cf.total_valor > 0\nORDER BY cf.total_valor DESC;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-480, 400],
+      "id": "rel-comb-query-0005",
+      "name": "Buscar Dados por Filial",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nconst cfg = $('⚙️ Configurações').first().json;\nconst per = $('Calcular Período').first().json;\nconst dataRef = per.dataRef;\nconst modoProducao = cfg.modo_producao;\nconst emailTeste = cfg.email_teste;\n\n// — Formatadores —\nconst fmtMoeda = (v) => {\n  if (!v && v !== 0) return 'R$ 0,00';\n  return 'R$ ' + parseFloat(v).toFixed(2).replace('.', ',').replace(/\\B(?=(\\d{3})+(?!\\d))/g, '.');\n};\nconst fmtLitros = (v) => {\n  if (!v && v !== 0) return '0,00';\n  return parseFloat(v).toFixed(2).replace('.', ',').replace(/\\B(?=(\\d{3})+(?!\\d))/g, '.');\n};\nconst fmtKm = (v) => {\n  if (!v && v !== 0) return '0';\n  return Math.round(parseFloat(v)).toString().replace(/\\B(?=(\\d{3})+(?!\\d))/g, '.');\n};\nconst fmtDec = (v, dec = 2) => {\n  if (v === null || v === undefined || isNaN(parseFloat(v))) return '—';\n  return parseFloat(v).toFixed(dec).replace('.', ',');\n};\n\n// — Totais gerais —\nlet sumKm = 0, sumLitrosGas = 0, sumValorGas = 0;\nlet sumLitrosDie = 0, sumValorDie = 0;\nlet sumLitrosAlc = 0, sumValorAlc = 0;\nlet sumLitros = 0, sumValor = 0, sumVeiculos = 0;\n\nconst filiais = [];\nfor (const item of items) {\n  const f = item.json;\n  const km       = parseFloat(f.total_km)       || 0;\n  const lGas     = parseFloat(f.litros_gasolina) || 0;\n  const vGas     = parseFloat(f.valor_gasolina)  || 0;\n  const lDie     = parseFloat(f.litros_diesel)   || 0;\n  const vDie     = parseFloat(f.valor_diesel)    || 0;\n  const lAlc     = parseFloat(f.litros_alcool)   || 0;\n  const vAlc     = parseFloat(f.valor_alcool)    || 0;\n  const lTot     = parseFloat(f.total_litros)    || 0;\n  const vTot     = parseFloat(f.total_valor)     || 0;\n  const veic     = parseInt(f.qtd_veiculos)      || 0;\n  const custoKm  = f.custo_por_km;\n  const kmL      = f.km_por_litro;\n\n  sumKm        += km;\n  sumLitrosGas += lGas;  sumValorGas += vGas;\n  sumLitrosDie += lDie;  sumValorDie += vDie;\n  sumLitrosAlc += lAlc;  sumValorAlc += vAlc;\n  sumLitros    += lTot;  sumValor    += vTot;\n  sumVeiculos  += veic;\n\n  filiais.push({\n    nome: f.filial_nome, km, lGas, vGas, lDie, vDie,\n    lAlc, vAlc, lTot, vTot, veic, custoKm, kmL\n  });\n}\n\nconst custoKmGeral = sumKm > 0 ? (sumValor / sumKm) : null;\nconst kmLGeral     = sumLitros > 0 && sumKm > 0 ? (sumKm / sumLitros) : null;\n\n// — Monta as linhas da tabela HTML —\nlet rowsHtml = '';\nfor (const f of filiais) {\n  // Cor do custo/km: acima da média = vermelho, abaixo = verde\n  let corCustoKm = '#2D3436';\n  if (f.custoKm !== null && custoKmGeral !== null) {\n    const desvio = ((f.custoKm - custoKmGeral) / custoKmGeral) * 100;\n    if (desvio > 5) corCustoKm = '#B02A30';\n    else if (desvio < -5) corCustoKm = '#4B7F52';\n  }\n\n  rowsHtml += `<tr>\n    <td style=\"padding:10px 12px;border-bottom:1px solid #F0EFEC;font-size:13px;font-weight:600;color:#2D3436\">${f.nome}</td>\n    <td style=\"padding:10px 8px;border-bottom:1px solid #F0EFEC;font-size:13px;text-align:center;color:#6B7280\">${f.veic}</td>\n    <td style=\"padding:10px 8px;border-bottom:1px solid #F0EFEC;font-size:13px;text-align:right;color:#2D3436\">${fmtKm(f.km)}</td>\n    <td style=\"padding:10px 8px;border-bottom:1px solid #F0EFEC;font-size:12px;text-align:right;color:#6B7280\">${fmtLitros(f.lGas)}</td>\n    <td style=\"padding:10px 8px;border-bottom:1px solid #F0EFEC;font-size:12px;text-align:right;color:#2D3436\">${fmtMoeda(f.vGas)}</td>\n    <td style=\"padding:10px 8px;border-bottom:1px solid #F0EFEC;font-size:12px;text-align:right;color:#6B7280\">${fmtLitros(f.lDie)}</td>\n    <td style=\"padding:10px 8px;border-bottom:1px solid #F0EFEC;font-size:12px;text-align:right;color:#2D3436\">${fmtMoeda(f.vDie)}</td>\n    <td style=\"padding:10px 8px;border-bottom:1px solid #F0EFEC;font-size:13px;text-align:right;font-weight:600;color:#2D3436\">${fmtLitros(f.lTot)}</td>\n    <td style=\"padding:10px 8px;border-bottom:1px solid #F0EFEC;font-size:13px;text-align:right;font-weight:700;color:#2D3436\">${fmtMoeda(f.vTot)}</td>\n    <td style=\"padding:10px 8px;border-bottom:1px solid #F0EFEC;font-size:13px;text-align:right;font-weight:700;color:${corCustoKm}\">${f.custoKm !== null ? 'R$ ' + fmtDec(f.custoKm, 2) : '—'}</td>\n  </tr>`;\n}\n\n// — Linha TOTAL GERAL —\nconst totalRow = `<tr style=\"background:#F1F5F9\">\n  <td style=\"padding:11px 12px;font-size:13px;font-weight:700;color:#0F172A;border-top:2px solid #CBD5E1\">TOTAL GERAL</td>\n  <td style=\"padding:11px 8px;font-size:13px;text-align:center;font-weight:700;color:#0F172A;border-top:2px solid #CBD5E1\">${sumVeiculos}</td>\n  <td style=\"padding:11px 8px;font-size:13px;text-align:right;font-weight:700;color:#0F172A;border-top:2px solid #CBD5E1\">${fmtKm(sumKm)}</td>\n  <td style=\"padding:11px 8px;font-size:12px;text-align:right;font-weight:700;color:#0F172A;border-top:2px solid #CBD5E1\">${fmtLitros(sumLitrosGas)}</td>\n  <td style=\"padding:11px 8px;font-size:12px;text-align:right;font-weight:700;color:#0F172A;border-top:2px solid #CBD5E1\">${fmtMoeda(sumValorGas)}</td>\n  <td style=\"padding:11px 8px;font-size:12px;text-align:right;font-weight:700;color:#0F172A;border-top:2px solid #CBD5E1\">${fmtLitros(sumLitrosDie)}</td>\n  <td style=\"padding:11px 8px;font-size:12px;text-align:right;font-weight:700;color:#0F172A;border-top:2px solid #CBD5E1\">${fmtMoeda(sumValorDie)}</td>\n  <td style=\"padding:11px 8px;font-size:13px;text-align:right;font-weight:700;color:#0F172A;border-top:2px solid #CBD5E1\">${fmtLitros(sumLitros)}</td>\n  <td style=\"padding:11px 8px;font-size:13px;text-align:right;font-weight:700;color:#0F172A;border-top:2px solid #CBD5E1\">${fmtMoeda(sumValor)}</td>\n  <td style=\"padding:11px 8px;font-size:13px;text-align:right;font-weight:700;color:#0F172A;border-top:2px solid #CBD5E1\">${custoKmGeral !== null ? 'R$ ' + fmtDec(custoKmGeral, 2) : '—'}</td>\n</tr>`;\n\nconst faixaTeste = modoProducao ? '' : '<tr><td style=\"background:#C85F15;padding:7px 40px;text-align:center;font-size:11px;color:#fff;font-weight:600;letter-spacing:0.05em;text-transform:uppercase\">⚠️ MODO TESTE · Destinatários reais omitidos</td></tr>';\n\nconst emailFinal = modoProducao\n  ? 'torredecontrole@gritsch.com.br,diretoria@gritsch.com.br,sandro@gritsch.com.br,flavio@gritsch.com.br,fabio.pepplow@gritsch.com.br'\n  : emailTeste;\n\n// — HTML do E-mail —\nconst html = `<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head>\n<body style=\"margin:0;padding:0;background:#F5F4F1;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif\">\n<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F4F1;padding:32px 0\"><tr><td align=\"center\">\n<table width=\"900\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#fff;border:1px solid #E8E6E0\">\n\n${faixaTeste}\n\n<!-- HEADER -->\n<tr><td style=\"padding:32px 40px 20px;border-bottom:1px solid #E8E6E0\">\n<table width=\"100%\"><tr>\n<td style=\"vertical-align:middle\"><img src=\"https://gritsch.com.br/grupogritsch.jpg\" width=\"80\" style=\"display:block\" alt=\"Gritsch\"></td>\n<td style=\"text-align:right;vertical-align:middle\">\n<div style=\"font-size:10px;letter-spacing:0.15em;text-transform:uppercase;color:#6B7280;font-weight:500\">Torre de Controle</div>\n<div style=\"font-size:11px;color:#9CA3AF;margin-top:2px\">Relatório Semanal de Combustível</div>\n</td></tr></table></td></tr>\n\n<!-- TÍTULO -->\n<tr><td style=\"padding:24px 40px 8px\">\n<div style=\"font-size:22px;color:#2D3436;font-weight:600\">📊 Relatório Semanal — Combustível por Filial</div>\n<div style=\"font-size:13px;color:#6B7280;margin-top:4px\">Período: ${dataRef}</div>\n</td></tr>\n\n<!-- 4 KPI CARDS -->\n<tr><td style=\"padding:12px 40px 20px\">\n<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr>\n<td width=\"25%\" style=\"padding-right:10px;border-right:1px solid #F0EFEC;vertical-align:top\">\n<div style=\"font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:#9CA3AF;font-weight:600\">KM Total Rodado</div>\n<div style=\"font-size:20px;color:#2D3436;font-weight:600;margin-top:4px\">${fmtKm(sumKm)} km</div>\n</td>\n<td width=\"25%\" style=\"padding:0 10px;border-right:1px solid #F0EFEC;vertical-align:top\">\n<div style=\"font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:#9CA3AF;font-weight:600\">Litros Totais</div>\n<div style=\"font-size:20px;color:#2D3436;font-weight:600;margin-top:4px\">${fmtLitros(sumLitros)} L</div>\n</td>\n<td width=\"25%\" style=\"padding:0 10px;border-right:1px solid #F0EFEC;vertical-align:top\">\n<div style=\"font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:#9CA3AF;font-weight:600\">Valor Total Gasto</div>\n<div style=\"font-size:20px;color:#1E5799;font-weight:600;margin-top:4px\">${fmtMoeda(sumValor)}</div>\n</td>\n<td width=\"25%\" style=\"padding-left:10px;vertical-align:top\">\n<div style=\"font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:#4B7F52;font-weight:600\">Custo / KM Médio</div>\n<div style=\"font-size:20px;color:#4B7F52;font-weight:600;margin-top:4px\">${custoKmGeral !== null ? 'R$ ' + fmtDec(custoKmGeral, 2) + ' /km' : '—'}</div>\n</td>\n</tr></table>\n</td></tr>\n\n<!-- TABELA POR FILIAL -->\n<tr><td style=\"padding:0 40px 8px\">\n<div style=\"font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:#6B7280;font-weight:600;margin-bottom:10px;border-left:3px solid #1E5799;padding-left:8px\">Detalhamento por Filial</div>\n<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border-collapse:collapse\">\n<tr style=\"background:#F8FAFC\">\n<th style=\"padding:10px 12px;text-align:left;font-size:10px;text-transform:uppercase;color:#64748B;font-weight:600;border-bottom:2px solid #CBD5E1\">Filial</th>\n<th style=\"padding:10px 8px;text-align:center;font-size:10px;text-transform:uppercase;color:#64748B;font-weight:600;border-bottom:2px solid #CBD5E1\">Veíc.</th>\n<th style=\"padding:10px 8px;text-align:right;font-size:10px;text-transform:uppercase;color:#64748B;font-weight:600;border-bottom:2px solid #CBD5E1\">KM Rod.</th>\n<th style=\"padding:10px 8px;text-align:right;font-size:10px;text-transform:uppercase;color:#64748B;font-weight:600;border-bottom:2px solid #CBD5E1;background:#FFFBEB\">Gas (L)</th>\n<th style=\"padding:10px 8px;text-align:right;font-size:10px;text-transform:uppercase;color:#64748B;font-weight:600;border-bottom:2px solid #CBD5E1;background:#FFFBEB\">Gas (R$)</th>\n<th style=\"padding:10px 8px;text-align:right;font-size:10px;text-transform:uppercase;color:#64748B;font-weight:600;border-bottom:2px solid #CBD5E1;background:#F0F9FF\">Diesel (L)</th>\n<th style=\"padding:10px 8px;text-align:right;font-size:10px;text-transform:uppercase;color:#64748B;font-weight:600;border-bottom:2px solid #CBD5E1;background:#F0F9FF\">Diesel (R$)</th>\n<th style=\"padding:10px 8px;text-align:right;font-size:10px;text-transform:uppercase;color:#64748B;font-weight:600;border-bottom:2px solid #CBD5E1\">Total (L)</th>\n<th style=\"padding:10px 8px;text-align:right;font-size:10px;text-transform:uppercase;color:#64748B;font-weight:600;border-bottom:2px solid #CBD5E1\">Total (R$)</th>\n<th style=\"padding:10px 8px;text-align:right;font-size:10px;text-transform:uppercase;color:#64748B;font-weight:600;border-bottom:2px solid #CBD5E1;background:#F0FDF4\">Custo/KM</th>\n</tr>\n${rowsHtml}\n${totalRow}\n</table>\n</td></tr>\n\n<!-- LEGENDA -->\n<tr><td style=\"padding:16px 40px 12px\">\n<div style=\"font-size:11px;color:#9CA3AF;font-style:italic;line-height:1.6\">\n📌 <strong>Custo/KM</strong> = Valor Total Gasto ÷ KM Rodado · <span style=\"color:#B02A30\">■</span> acima de +5% da média · <span style=\"color:#4B7F52\">■</span> abaixo de -5% da média<br>\n📌 KM Rodado calculado por MAX(hodômetro) − MIN(hodômetro) da semana, por veículo. Filiais sem leitura válida de hodômetro aparecem com \\\"—\\\".\\n</div>\n</td></tr>\n\n<!-- FOOTER -->\n<tr><td style=\"padding:24px 40px;border-top:1px solid #E8E6E0;background:#FAFAF8\">\n<div style=\"font-size:11px;color:#9CA3AF;line-height:1.7\">\nRelatório gerado automaticamente pela Torre de Controle.<br>\nFonte: DW TruckPag · Dúvidas: torredecontrole@gritsch.com.br\n</div>\n</td></tr>\n\n</table>\n<div style=\"margin-top:14px;font-size:10px;color:#9CA3AF;letter-spacing:0.08em\">GRITSCH TRANSPORTES · SOLUÇÕES EM LOGÍSTICA</div>\n</td></tr></table></body></html>`;\n\n// — CSV para anexo —\nconst esc = (val) => {\n  if (val === null || val === undefined) return '';\n  return '\"' + String(val).replace(/\"/g, '\"\"') + '\"';\n};\n\nlet csv = 'Filial;Veiculos;KM Rodado;Litros Gasolina;Valor Gasolina (R$);Litros Diesel;Valor Diesel (R$);Litros Alcool;Valor Alcool (R$);Total Litros;Total Valor (R$);Custo por KM (R$);KM por Litro\\n';\nfor (const f of filiais) {\n  csv += `${esc(f.nome)};${f.veic};${f.km};${parseFloat(f.lGas).toFixed(2).replace('.',',')};${parseFloat(f.vGas).toFixed(2).replace('.',',')};${parseFloat(f.lDie).toFixed(2).replace('.',',')};${parseFloat(f.vDie).toFixed(2).replace('.',',')};${parseFloat(f.lAlc).toFixed(2).replace('.',',')};${parseFloat(f.vAlc).toFixed(2).replace('.',',')};${parseFloat(f.lTot).toFixed(2).replace('.',',')};${parseFloat(f.vTot).toFixed(2).replace('.',',')};${f.custoKm !== null ? parseFloat(f.custoKm).toFixed(2).replace('.',',') : ''};${f.kmL !== null ? parseFloat(f.kmL).toFixed(2).replace('.',',') : ''}\\n`;\n}\n// Linha total\ncsv += `\"TOTAL GERAL\";${sumVeiculos};${sumKm};${sumLitrosGas.toFixed(2).replace('.',',')};${sumValorGas.toFixed(2).replace('.',',')};${sumLitrosDie.toFixed(2).replace('.',',')};${sumValorDie.toFixed(2).replace('.',',')};${sumLitrosAlc.toFixed(2).replace('.',',')};${sumValorAlc.toFixed(2).replace('.',',')};${sumLitros.toFixed(2).replace('.',',')};${sumValor.toFixed(2).replace('.',',')};${custoKmGeral !== null ? custoKmGeral.toFixed(2).replace('.',',') : ''};${kmLGeral !== null ? kmLGeral.toFixed(2).replace('.',',') : ''}\\n`;\n\nconst dateSuf = dataRef.replace(/\\//g, '-').replace(/ /g, '');\nreturn [{\n  json: { htmlEmail: html, emailFinal },\n  binary: {\n    attachment_relatorio: {\n      data: Buffer.from('\\ufeff' + csv, 'utf-8').toString('base64'),\n      mimeType: 'text/csv',\n      fileName: `Relatorio_Combustivel_Filiais_${dateSuf}.csv`\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-200, 400],
+      "id": "rel-comb-html-0006",
+      "name": "Gerar HTML + CSV"
+    },
+    {
+      "parameters": {
+        "fromEmail": "naoresponda@gritsch.com.br",
+        "toEmail": "={{ $json.emailFinal }}",
+        "subject": "=📊 Relatório Semanal Combustível por Filial | {{ $('Calcular Período').first().json.dataRef }}",
+        "html": "={{ $json.htmlEmail }}",
+        "options": {
+          "appendAttribution": false,
+          "attachments": "attachment_relatorio"
+        }
+      },
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [80, 400],
+      "id": "rel-comb-email-0007",
+      "name": "Enviar Email"
+    }
+  ],
+  "connections": {
+    "Executar Manualmente": {
+      "main": [
+        [
+          {
+            "node": "⚙️ Configurações",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Disparo Semanal (Segunda 07h)": {
+      "main": [
+        [
+          {
+            "node": "⚙️ Configurações",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⚙️ Configurações": {
+      "main": [
+        [
+          {
+            "node": "Calcular Período",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calcular Período": {
+      "main": [
+        [
+          {
+            "node": "Buscar Dados por Filial",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar Dados por Filial": {
+      "main": [
+        [
+          {
+            "node": "Gerar HTML + CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gerar HTML + CSV": {
+      "main": [
+        [
+          {
+            "node": "Enviar Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fb581638443806838dcc4ad5d9ab57cd83fc9fe2e7f923a0752e9d8321c3faf5"
+  },
+  "id": "RelCombustivelSemanalFilial",
+  "tags": [
+    {
+      "name": "gold"
+    },
+    {
+      "name": "torre-de-controle"
+    }
+  ]
+}

@@ -1,0 +1,80 @@
+{
+  "name": "GOLD - 27 - MV Painel Executivo Mensal",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-640, 0],
+      "id": "a1b2c3d4-0027-4000-8000-000000000001",
+      "name": "Executar Manualmente"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "45 8 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [-640, 200],
+      "id": "a1b2c3d4-0027-4000-8000-000000000002",
+      "name": "Refresh Diário"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DROP MATERIALIZED VIEW IF EXISTS torre.gold_mv_painel_executivo_mensal CASCADE;\n\nCREATE MATERIALIZED VIEW torre.gold_mv_painel_executivo_mensal AS\nWITH base AS (\n  -- Agrega painel filial para visão nacional por mês\n  SELECT\n    ano_mes, ano, mes,\n    SUM(qtd_abastecimentos)                                                AS qtd_abastecimentos,\n    SUM(qtd_veiculos)                                                      AS qtd_filiais_veiculos,\n    ROUND(SUM(total_litros)::numeric, 2)                                   AS total_litros,\n    ROUND(SUM(total_valor_combustivel)::numeric, 2)                        AS total_valor_combustivel,\n    ROUND(\n      SUM(total_valor_combustivel) / NULLIF(SUM(total_litros), 0)::numeric, 4\n    )                                                                       AS preco_medio_ponderado,\n    SUM(qtd_passagens)                                                     AS qtd_passagens,\n    ROUND(SUM(total_valor_pedagio)::numeric, 2)                            AS total_valor_pedagio,\n    ROUND(SUM(custo_total)::numeric, 2)                                    AS custo_total,\n    ROUND(SUM(COALESCE(total_km, 0))::numeric, 2)                          AS total_km,\n    SUM(qtd_transacoes_suspeitas)                                          AS qtd_transacoes_suspeitas,\n    ROUND(SUM(total_valor_suspeito)::numeric, 2)                           AS total_valor_suspeito\n  FROM torre.gold_mv_painel_filial_mensal\n  GROUP BY 1, 2, 3\n),\nveic_unicos AS (\n  -- Veículos únicos nacionais por mês (sem dupla contagem entre filiais)\n  SELECT ano_mes, COUNT(DISTINCT placa) AS qtd_veiculos_ativos\n  FROM torre.gold_mv_atividade_frota_mensal\n  GROUP BY 1\n),\nanp AS (\n  -- Desvio médio vs ANP ponderado por volume — Diesel\n  SELECT\n    ano_mes,\n    ROUND(\n      SUM(total_valor_liquido * COALESCE(desvio_pct, 0) / 100)\n      / NULLIF(SUM(total_valor_liquido), 0)::numeric, 2\n    )                                                AS desvio_medio_vs_anp_pct,\n    ROUND(SUM(COALESCE(custo_extra_vs_anp, 0))::numeric, 2) AS custo_extra_vs_anp\n  FROM torre.gold_mv_preco_combustivel_mensal\n  WHERE grupo_combustivel = 'Diesel'\n  GROUP BY 1\n),\ncom_lag AS (\n  SELECT\n    b.*,\n    LAG(b.total_valor_combustivel) OVER (ORDER BY b.ano_mes) AS valor_mes_anterior,\n    LAG(b.total_litros)            OVER (ORDER BY b.ano_mes) AS litros_mes_anterior,\n    LAG(b.preco_medio_ponderado)   OVER (ORDER BY b.ano_mes) AS preco_mes_anterior,\n    LAG(b.custo_total)             OVER (ORDER BY b.ano_mes) AS custo_total_mes_anterior\n  FROM base b\n)\nSELECT\n  l.ano_mes,\n  l.ano,\n  l.mes,\n  -- Volume\n  l.qtd_abastecimentos,\n  COALESCE(v.qtd_veiculos_ativos, 0)                                      AS qtd_veiculos_ativos,\n  l.total_litros,\n  -- Combustível\n  l.total_valor_combustivel,\n  l.preco_medio_ponderado,\n  -- Pedágio\n  l.qtd_passagens,\n  l.total_valor_pedagio,\n  -- Custo total\n  l.custo_total,\n  -- Eficiência\n  l.total_km,\n  ROUND(l.total_km / NULLIF(l.total_litros, 0)::numeric, 4)              AS km_litro_medio,\n  ROUND(l.custo_total / NULLIF(l.total_km, 0)::numeric, 4)               AS custo_total_por_km,\n  -- Suspeitos\n  l.qtd_transacoes_suspeitas,\n  l.total_valor_suspeito,\n  ROUND(\n    CASE WHEN l.total_valor_combustivel > 0\n    THEN l.total_valor_suspeito / l.total_valor_combustivel * 100\n    END::numeric, 2\n  )                                                                        AS pct_valor_suspeito,\n  -- Referência ANP (Diesel)\n  a.desvio_medio_vs_anp_pct,\n  a.custo_extra_vs_anp,\n  -- Variações MoM\n  ROUND(\n    CASE WHEN l.valor_mes_anterior > 0\n    THEN (l.total_valor_combustivel - l.valor_mes_anterior) / l.valor_mes_anterior * 100\n    END::numeric, 2\n  )                                                                        AS variacao_pct_valor_mom,\n  ROUND(\n    CASE WHEN l.litros_mes_anterior > 0\n    THEN (l.total_litros - l.litros_mes_anterior) / l.litros_mes_anterior * 100\n    END::numeric, 2\n  )                                                                        AS variacao_pct_litros_mom,\n  ROUND(\n    CASE WHEN l.preco_mes_anterior > 0\n    THEN (l.preco_medio_ponderado - l.preco_mes_anterior) / l.preco_mes_anterior * 100\n    END::numeric, 2\n  )                                                                        AS variacao_pct_preco_mom,\n  ROUND(\n    CASE WHEN l.custo_total_mes_anterior > 0\n    THEN (l.custo_total - l.custo_total_mes_anterior) / l.custo_total_mes_anterior * 100\n    END::numeric, 2\n  )                                                                        AS variacao_pct_custo_total_mom\nFROM com_lag l\nLEFT JOIN veic_unicos v ON l.ano_mes = v.ano_mes\nLEFT JOIN anp         a ON l.ano_mes = a.ano_mes\nWITH DATA;\n\nCREATE INDEX idx_mv_painel_exec_ano_mes ON torre.gold_mv_painel_executivo_mensal (ano_mes);\n\nSELECT 'MV gold_mv_painel_executivo_mensal criada' AS status;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-400, 100],
+      "id": "a1b2c3d4-0027-4000-8000-000000000010",
+      "name": "Criar MV",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Painel executivo completo\nSELECT\n  ano_mes,\n  qtd_veiculos_ativos,\n  qtd_abastecimentos,\n  ROUND(total_litros::numeric, 0)              AS total_litros,\n  ROUND(total_valor_combustivel::numeric, 2)   AS combustivel,\n  ROUND(total_valor_pedagio::numeric, 2)       AS pedagio,\n  ROUND(custo_total::numeric, 2)               AS custo_total,\n  preco_medio_ponderado,\n  desvio_medio_vs_anp_pct,\n  ROUND(custo_extra_vs_anp::numeric, 2)        AS custo_extra_vs_anp,\n  ROUND(custo_total_por_km::numeric, 4)        AS custo_por_km,\n  km_litro_medio,\n  qtd_transacoes_suspeitas,\n  pct_valor_suspeito,\n  variacao_pct_valor_mom,\n  variacao_pct_preco_mom,\n  variacao_pct_custo_total_mom\nFROM torre.gold_mv_painel_executivo_mensal\nORDER BY ano_mes DESC\nLIMIT 6;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-160, 100],
+      "id": "a1b2c3d4-0027-4000-8000-000000000011",
+      "name": "Validar",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Executar Manualmente": {"main": [[{"node": "Criar MV", "type": "main", "index": 0}]]},
+    "Refresh Diário":       {"main": [[{"node": "Criar MV", "type": "main", "index": 0}]]},
+    "Criar MV":             {"main": [[{"node": "Validar",  "type": "main", "index": 0}]]}
+  },
+  "active": true,
+  "settings": {"executionOrder": "v1"},
+  "versionId": "a1b2c3d4-0027-4000-8000-000000000000",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fb581638443806838dcc4ad5d9ab57cd83fc9fe2e7f923a0752e9d8321c3faf5"
+  },
+  "id": "GOLD027mvPainelExecutivoMensal",
+  "tags": [{"name": "gold"}, {"name": "torre-de-controle"}]
+}

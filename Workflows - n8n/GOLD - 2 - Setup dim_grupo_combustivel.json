@@ -1,0 +1,123 @@
+{
+  "name": "GOLD - 2 - Setup dim_grupo_combustivel",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-480, 0],
+      "id": "a1b2c3d4-0002-4000-8000-000000000001",
+      "name": "Executar Manualmente"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS torre.gold_dim_grupo_combustivel (\n  nome_combustivel  TEXT PRIMARY KEY,\n  grupo_combustivel TEXT NOT NULL CHECK (grupo_combustivel IN ('Diesel', 'Gasolina', 'Álcool', 'Arla', 'GNV', 'Outros'))\n);",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-240, 0],
+      "id": "a1b2c3d4-0002-4000-8000-000000000002",
+      "name": "Criar Tabela",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO torre.gold_dim_grupo_combustivel (nome_combustivel, grupo_combustivel)\nVALUES\n  ('diesel',                     'Diesel'),\n  ('diesel s10',                 'Diesel'),\n  ('diesel s-10',                'Diesel'),\n  ('diesel s500',                'Diesel'),\n  ('diesel s-500',               'Diesel'),\n  ('diesel s10 aditivado',       'Diesel'),\n  ('diesel s500 aditivado',      'Diesel'),\n  ('diesel aditivado',           'Diesel'),\n  ('diesel comum',               'Diesel'),\n  ('oleo diesel',                'Diesel'),\n  ('óleo diesel',                'Diesel'),\n  ('biodiesel',                  'Diesel'),\n  ('b10',                        'Diesel'),\n  ('b12',                        'Diesel'),\n  ('b13',                        'Diesel'),\n  ('gasolina',                   'Gasolina'),\n  ('gasolina c',                 'Gasolina'),\n  ('gasolina comum',             'Gasolina'),\n  ('gasolina aditivada',         'Gasolina'),\n  ('gasolina premium',           'Gasolina'),\n  ('gasolina podium',            'Gasolina'),\n  ('gasolina v-power',           'Gasolina'),\n  ('gasolina select',            'Gasolina'),\n  ('gasolina boa',               'Gasolina'),\n  ('gasolina super',             'Gasolina'),\n  ('gasolina aditivada premium', 'Gasolina'),\n  ('alcool',                     'Álcool'),\n  ('álcool',                     'Álcool'),\n  ('etanol',                     'Álcool'),\n  ('etanol hidratado',           'Álcool'),\n  ('alcool comum',               'Álcool'),\n  ('alcool aditivado',           'Álcool'),\n  ('álcool comum',               'Álcool'),\n  ('álcool aditivado',           'Álcool'),\n  ('etanol aditivado',           'Álcool'),\n  ('arla',                       'Arla'),\n  ('arla 32',                    'Arla'),\n  ('arla32',                     'Arla'),\n  ('gnv',                        'GNV'),\n  ('gas natural',                'GNV'),\n  ('gás natural',                'GNV'),\n  ('gás natural veicular',       'GNV')\nON CONFLICT (nome_combustivel) DO UPDATE SET\n  grupo_combustivel = EXCLUDED.grupo_combustivel;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [0, 0],
+      "id": "a1b2c3d4-0002-4000-8000-000000000003",
+      "name": "Upsert Combustíveis",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT grupo_combustivel, COUNT(*) AS total FROM torre.gold_dim_grupo_combustivel GROUP BY grupo_combustivel ORDER BY grupo_combustivel;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [240, 0],
+      "id": "a1b2c3d4-0002-4000-8000-000000000004",
+      "name": "Validar Resultado",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Executar Manualmente": {
+      "main": [
+        [
+          {
+            "node": "Criar Tabela",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Criar Tabela": {
+      "main": [
+        [
+          {
+            "node": "Upsert Combustíveis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Combustíveis": {
+      "main": [
+        [
+          {
+            "node": "Validar Resultado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "a1b2c3d4-0002-4000-8000-000000000000",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fb581638443806838dcc4ad5d9ab57cd83fc9fe2e7f923a0752e9d8321c3faf5"
+  },
+  "id": "GOLD002dimCombustivel",
+  "tags": [
+    {
+      "name": "gold"
+    },
+    {
+      "name": "setup"
+    },
+    {
+      "name": "torre-de-controle"
+    }
+  ]
+}

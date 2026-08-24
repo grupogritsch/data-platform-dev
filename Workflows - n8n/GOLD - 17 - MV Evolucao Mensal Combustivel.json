@@ -1,0 +1,91 @@
+{
+  "name": "GOLD - 17 - MV Evolucao Mensal Combustivel",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-640, 0],
+      "id": "a1b2c3d4-0017-4000-8000-000000000001",
+      "name": "Executar Manualmente"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "15 5 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [-640, 200],
+      "id": "a1b2c3d4-0017-4000-8000-000000000002",
+      "name": "Refresh Diário"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Recria a MV com a definição mais recente\nDROP MATERIALIZED VIEW IF EXISTS torre.gold_mv_evolucao_mensal CASCADE;\n\nCREATE MATERIALIZED VIEW torre.gold_mv_evolucao_mensal AS\nWITH base AS (\n  SELECT\n    ano_mes,\n    ano,\n    mes,\n    filial_nome,\n    filial_estado,\n    filial_regiao,\n    grupo_combustivel,\n    grupo_veiculo,\n    qtd_abastecimentos,\n    qtd_veiculos,\n    total_valor_liquido,\n    total_litros,\n    preco_medio_ponderado\n  FROM torre.gold_mv_kpis_combustivel_mensal\n),\ncom_lag AS (\n  SELECT\n    *,\n    LAG(total_valor_liquido)   OVER w AS valor_mes_anterior,\n    LAG(total_litros)          OVER w AS litros_mes_anterior,\n    LAG(preco_medio_ponderado) OVER w AS preco_mes_anterior,\n    LAG(qtd_abastecimentos)    OVER w AS qtd_abastecimentos_mes_anterior,\n    LAG(qtd_veiculos)          OVER w AS qtd_veiculos_mes_anterior\n  FROM base\n  WINDOW w AS (\n    PARTITION BY filial_nome, grupo_combustivel, grupo_veiculo\n    ORDER BY ano_mes\n  )\n)\nSELECT\n  ano_mes,\n  ano,\n  mes,\n  filial_nome,\n  filial_estado,\n  filial_regiao,\n  grupo_combustivel,\n  grupo_veiculo,\n  qtd_abastecimentos,\n  qtd_veiculos,\n  ROUND(total_valor_liquido::numeric, 2)          AS total_valor_liquido,\n  ROUND(total_litros::numeric, 2)                 AS total_litros,\n  ROUND(preco_medio_ponderado::numeric, 4)        AS preco_medio_ponderado,\n  ROUND(valor_mes_anterior::numeric, 2)           AS valor_mes_anterior,\n  ROUND(litros_mes_anterior::numeric, 2)          AS litros_mes_anterior,\n  ROUND(preco_mes_anterior::numeric, 4)           AS preco_mes_anterior,\n  qtd_abastecimentos_mes_anterior,\n  qtd_veiculos_mes_anterior,\n  -- Variações percentuais MoM\n  ROUND(\n    CASE WHEN valor_mes_anterior > 0\n    THEN (total_valor_liquido - valor_mes_anterior) / valor_mes_anterior * 100\n    END::numeric, 2\n  ) AS variacao_pct_valor,\n  ROUND(\n    CASE WHEN litros_mes_anterior > 0\n    THEN (total_litros - litros_mes_anterior) / litros_mes_anterior * 100\n    END::numeric, 2\n  ) AS variacao_pct_litros,\n  ROUND(\n    CASE WHEN preco_mes_anterior > 0\n    THEN (preco_medio_ponderado - preco_mes_anterior) / preco_mes_anterior * 100\n    END::numeric, 2\n  ) AS variacao_pct_preco\nFROM com_lag\nWITH DATA;\n\nCREATE INDEX idx_mv_evolucao_mensal_ano_mes\n  ON torre.gold_mv_evolucao_mensal (ano_mes);\nCREATE INDEX idx_mv_evolucao_mensal_filial\n  ON torre.gold_mv_evolucao_mensal (filial_nome);\nCREATE INDEX idx_mv_evolucao_mensal_grupo_comb\n  ON torre.gold_mv_evolucao_mensal (grupo_combustivel);\nCREATE INDEX idx_mv_evolucao_mensal_grupo_veic\n  ON torre.gold_mv_evolucao_mensal (grupo_veiculo);\n\nSELECT 'MV gold_mv_evolucao_mensal criada' AS status;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-400, 100],
+      "id": "a1b2c3d4-0017-4000-8000-000000000010",
+      "name": "Criar MV",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  COUNT(*)                                                        AS linhas,\n  COUNT(DISTINCT ano_mes)                                         AS meses,\n  MIN(ano_mes)                                                    AS primeiro_mes,\n  MAX(ano_mes)                                                    AS ultimo_mes,\n  COUNT(*) FILTER (WHERE variacao_pct_valor IS NOT NULL)          AS com_variacao_mom,\n  ROUND(AVG(variacao_pct_valor) FILTER\n    (WHERE variacao_pct_valor IS NOT NULL)::numeric, 2)           AS variacao_media_pct_valor,\n  ROUND(AVG(variacao_pct_preco) FILTER\n    (WHERE variacao_pct_preco IS NOT NULL)::numeric, 2)           AS variacao_media_pct_preco\nFROM torre.gold_mv_evolucao_mensal\nWHERE grupo_combustivel = 'Diesel';",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-160, 100],
+      "id": "a1b2c3d4-0017-4000-8000-000000000011",
+      "name": "Validar",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Executar Manualmente": {
+      "main": [[{"node": "Criar MV", "type": "main", "index": 0}]]
+    },
+    "Refresh Diário": {
+      "main": [[{"node": "Criar MV", "type": "main", "index": 0}]]
+    },
+    "Criar MV": {
+      "main": [[{"node": "Validar", "type": "main", "index": 0}]]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "a1b2c3d4-0017-4000-8000-000000000000",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fb581638443806838dcc4ad5d9ab57cd83fc9fe2e7f923a0752e9d8321c3faf5"
+  },
+  "id": "GOLD017mvEvolucaoMensal",
+  "tags": [
+    {"name": "gold"},
+    {"name": "torre-de-controle"}
+  ]
+}

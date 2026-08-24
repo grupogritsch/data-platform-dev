@@ -1,0 +1,91 @@
+{
+  "name": "GOLD - 7 - MV KPIs Pedagio Mensal",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-640, 0],
+      "id": "a1b2c3d4-0008-4000-8000-000000000001",
+      "name": "Executar Manualmente"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 6 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [-640, 200],
+      "id": "a1b2c3d4-0008-4000-8000-000000000002",
+      "name": "Refresh Diário"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DROP MATERIALIZED VIEW IF EXISTS torre.gold_mv_kpis_pedagio_mensal CASCADE;\n\nCREATE MATERIALIZED VIEW torre.gold_mv_kpis_pedagio_mensal AS\nSELECT\n  TO_CHAR(data, 'YYYY-MM')       AS ano_mes,\n  EXTRACT(YEAR  FROM data)::int  AS ano,\n  EXTRACT(MONTH FROM data)::int  AS mes,\n  filial_nome,\n  filial_estado,\n  filial_regiao,\n  grupo_veiculo,\n  COUNT(*)                       AS qtd_passagens,\n  COUNT(DISTINCT placa)          AS qtd_veiculos,\n  ROUND(SUM(valor)::numeric, 2)  AS total_valor,\n  ROUND(AVG(valor)::numeric, 4)  AS ticket_medio\nFROM torre.gold_truckpag_pedagio\nWHERE filial_nome IS NOT NULL\n  AND placa_tipo IS NULL\nGROUP BY 1, 2, 3, 4, 5, 6, 7\nWITH DATA;\n\nCREATE INDEX idx_mv_kpis_ped_mensal_ano_mes\n  ON torre.gold_mv_kpis_pedagio_mensal (ano_mes);\n\nCREATE INDEX idx_mv_kpis_ped_mensal_filial\n  ON torre.gold_mv_kpis_pedagio_mensal (filial_nome);\n\nCREATE INDEX idx_mv_kpis_ped_mensal_grupo_veic\n  ON torre.gold_mv_kpis_pedagio_mensal (grupo_veiculo);\n\nSELECT 'MV gold_mv_kpis_pedagio_mensal criada' AS status;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-400, 100],
+      "id": "a1b2c3d4-0008-4000-8000-000000000010",
+      "name": "Criar MV",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Totais gerais\nSELECT\n  COUNT(DISTINCT ano_mes)                    AS meses,\n  COUNT(*)                                   AS linhas_mv,\n  SUM(qtd_passagens)                         AS total_passagens,\n  SUM(qtd_veiculos)                          AS total_veiculos_mes,\n  ROUND(SUM(total_valor)::numeric, 2)        AS total_gasto,\n  ROUND(AVG(ticket_medio)::numeric, 4)       AS ticket_medio_geral\nFROM torre.gold_mv_kpis_pedagio_mensal;\n\n-- Últimos 3 meses por grupo_veiculo\nSELECT\n  ano_mes,\n  grupo_veiculo,\n  SUM(qtd_passagens)                         AS passagens,\n  SUM(qtd_veiculos)                          AS veiculos,\n  ROUND(SUM(total_valor)::numeric, 2)        AS total,\n  ROUND(\n    SUM(total_valor) / NULLIF(SUM(qtd_passagens), 0)\n  ::numeric, 4)                              AS ticket_medio\nFROM torre.gold_mv_kpis_pedagio_mensal\nWHERE ano_mes >= TO_CHAR(CURRENT_DATE - INTERVAL '3 months', 'YYYY-MM')\nGROUP BY ano_mes, grupo_veiculo\nORDER BY ano_mes DESC, total DESC;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-160, 100],
+      "id": "a1b2c3d4-0008-4000-8000-000000000011",
+      "name": "Validar",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Executar Manualmente": {
+      "main": [[{"node": "Criar MV", "type": "main", "index": 0}]]
+    },
+    "Refresh Diário": {
+      "main": [[{"node": "Criar MV", "type": "main", "index": 0}]]
+    },
+    "Criar MV": {
+      "main": [[{"node": "Validar", "type": "main", "index": 0}]]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "a1b2c3d4-0008-4000-8000-000000000000",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fb581638443806838dcc4ad5d9ab57cd83fc9fe2e7f923a0752e9d8321c3faf5"
+  },
+  "id": "GOLD007mvKpisPedMensal",
+  "tags": [
+    {"name": "gold"},
+    {"name": "torre-de-controle"}
+  ]
+}

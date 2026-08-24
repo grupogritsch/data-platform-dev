@@ -1,0 +1,314 @@
+{
+  "name": "Torre de Controle - Alertas Telemetria",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 7 * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "57bde532-baf8-4ea7-b386-d0002de3dcc5",
+      "name": "01 - Schedule 07h30",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -4032,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Calcula periodo: dia anterior (seg→pega sex/sab/dom)\nconst agora = new Date();\nconst dow = agora.getDay();\n\nlet diasInicio = 1;\nif (dow === 1) diasInicio = 3; // segunda pega sexta\n\nconst di = new Date(agora);\ndi.setDate(agora.getDate() - diasInicio);\nconst df = new Date(agora);\ndf.setDate(agora.getDate() - 1);\n\nconst fmt = (d) => String(d.getDate()).padStart(2,'0') + '/' + String(d.getMonth()+1).padStart(2,'0') + '/' + d.getFullYear();\nconst fmtPG = (d) => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');\n\nconst beginStr = fmt(di);\nconst endStr = fmt(df);\n\nreturn [{  json: {    begin: beginStr + ' 00:00:00',    end: endStr + ' 23:59:00',    dataRef: beginStr === endStr ? beginStr : beginStr + ' a ' + endStr,    dataRefPG: fmtPG(di),    begin_timestamp: fmtPG(di) + ' 00:00:00',    end_timestamp: fmtPG(df) + ' 23:59:59'  }}];"
+      },
+      "id": "c5d4879f-16d8-410e-8448-135071ca8655",
+      "name": "02 - Calcular Periodo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3808,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH eventos_periodo AS (\n  -- Filtro de ruido (24/08/2026): veiculo com so 1 pico no periodo nao\n  -- \"pontua\" -- precisa de 2 ou mais para aparecer no relatorio. A view\n  -- torre.vw_alertas_telemetria_saneados nao tem janela de tempo propria\n  -- (e o historico completo), entao o limiar so faz sentido calculado\n  -- dentro da janela que este relatorio ja recorta.\n  \n  SELECT \n    e.placa,\n    e.provedor_rastreador,\n    e.velocidade_registrada,\n    e.data_hora_alerta,\n    e.latitude,\n    e.longitude,\n    e.endereco,\n    e.cidade,\n    e.estado,\n    e.nome_evento,\n    '{{ $(\"02 - Calcular Periodo\").first().json.dataRef }}' AS data_ref,\n    e.filial_operacional,\n    e.modelo,\n    e.grupo_veiculo,\n    e.situacao_veiculo,\n    count(*) OVER (PARTITION BY e.placa) AS qtd_no_periodo\n  FROM torre.vw_alertas_telemetria_saneados e\n  WHERE e.data_hora_timestamp BETWEEN '{{ $(\"02 - Calcular Periodo\").first().json.begin_timestamp }}'::timestamp \n                                 AND '{{ $(\"02 - Calcular Periodo\").first().json.end_timestamp }}'::timestamp),\neventos AS (\n  SELECT placa, provedor_rastreador, velocidade_registrada, data_hora_alerta,\n         latitude, longitude, endereco, cidade, estado, nome_evento,\n         data_ref, filial_operacional, modelo, grupo_veiculo, situacao_veiculo\n    FROM eventos_periodo\n   WHERE qtd_no_periodo >= 2\n),\nemails AS (\n  SELECT \n    ef.filial_operacional,\n    ef.email_destino,\n    ef.email_cc,\n    ef.cc_regional,\n    COALESCE(cfg.valor, 'torredecontrole@gritsch.com.br,flavio@gritsch.com.br,fabio.pepplow@gritsch.com.br') AS cc_global\n  FROM torre.email_gritsch_filiais ef\n  CROSS JOIN (\n    SELECT valor FROM torre.email_gritsch_config WHERE chave = 'cc_global' LIMIT 1\n  ) cfg\n  WHERE ef.ativo = true\n),\nconsolidado_cfg AS (\n  SELECT \n    COALESCE(MAX(CASE WHEN chave = 'consolidado_destinatarios' THEN valor END), 'jefferson@gritsch.com.br') AS consolidado_destinatarios,\n    COALESCE(MAX(CASE WHEN chave = 'consolidado_cc' THEN valor END), 'sandro@gritsch.com.br,torredecontrole@gritsch.com.br,flavio@gritsch.com.br,fabio.pepplow@gritsch.com.br') AS consolidado_cc\n  FROM torre.email_gritsch_config\n)\nSELECT \n  ev.*,\n  COALESCE(em.email_destino, 'torredecontrole@gritsch.com.br') AS email_destino_db,\n  COALESCE(em.email_cc, '') AS email_cc_db,\n  COALESCE(em.cc_regional, '') AS cc_regional_db,\n  COALESCE(em.cc_global, 'torredecontrole@gritsch.com.br,flavio@gritsch.com.br,fabio.pepplow@gritsch.com.br') AS cc_global_db,\n  ccfg.consolidado_destinatarios AS consolidado_destinatarios_db,\n  ccfg.consolidado_cc AS consolidado_cc_db\nFROM eventos ev\nLEFT JOIN emails em ON em.filial_operacional = ev.filial_operacional\nCROSS JOIN consolidado_cfg ccfg\nORDER BY ev.velocidade_registrada DESC;"
+      },
+      "id": "3f8ccfc2-f8ed-4244-96c1-c4195f82b29c",
+      "name": "03 - Buscar Alertas Consolidados SQL",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -3584,
+        96
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "0nuM10NKLuw9hW1i",
+          "name": "DW - Gabriel"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst dataRef = $('02 - Calcular Periodo').first().json.dataRef;\n\nif (items.length === 0 || (items.length === 1 && items[0].json._semEventos) || !items[0].json.placa) {\n  return [{ json: { _semEventos: true, dataRef } }];\n}\n\nconst grouped = {};\nfor (const item of items) {\n  const d = item.json;\n  const filial = d.filial_operacional || 'DESCONHECIDA';\n  if (!grouped[filial]) grouped[filial] = [];\n  grouped[filial].push(d);\n}\n\nconst results = [];\nfor (const [filial, evs] of Object.entries(grouped)) {\n  const total = evs.length;\n  const vels = evs.map(e => parseFloat(e.velocidade_registrada) || 0).filter(v => v > 0);\n  const velMax = vels.length > 0 ? Math.max(...vels) : 0;\n  const velMedia = vels.length > 0 ? Math.round((vels.reduce((s,v) => s+v, 0) / vels.length) * 100) / 100 : 0;\n\n  const porPlaca = {};\n  for (const e of evs) {\n    if (!porPlaca[e.placa]) porPlaca[e.placa] = { qtd: 0, velMax: 0, modelo: e.modelo || '', provedor: e.provedor_rastreador || '3STEC' };\n    porPlaca[e.placa].qtd++;\n    const v = parseFloat(e.velocidade_registrada) || 0;\n    if (v > porPlaca[e.placa].velMax) porPlaca[e.placa].velMax = v;\n  }\n\n  const tabelaPlacas = Object.entries(porPlaca)\n    .sort((a,b) => b[1].qtd - a[1].qtd)\n    .slice(0, 15)\n    .map(([p, d]) => ({ placa: p, qtd: d.qtd, velMax: d.velMax, modelo: d.modelo, provedor: d.provedor }));\n\n  const topOc = [...evs]\n    .sort((a,b) => (parseFloat(b.velocidade_registrada)||0) - (parseFloat(a.velocidade_registrada)||0))\n    .slice(0, 10)\n    .map(e => ({\n      placa: e.placa,\n      velocidade: e.velocidade_registrada,\n      data: e.data_hora_alerta,\n      local: (e.cidade || '') + (e.estado ? '/' + e.estado : ''),\n      origem: e.provedor_rastreador || '3STEC'\n    }));\n\n  const piorEntry = Object.entries(porPlaca)\n    .sort((a,b) => b[1].qtd !== a[1].qtd ? b[1].qtd - a[1].qtd : b[1].velMax - a[1].velMax)[0];\n\n  let resumo = '';\n  if (piorEntry) {\n    const [piorPlaca, piorDados] = piorEntry;\n    const evGrave = evs\n      .filter(e => e.placa === piorPlaca)\n      .sort((a,b) => (parseFloat(b.velocidade_registrada)||0) - (parseFloat(a.velocidade_registrada)||0))[0];\n    \n    const local = evGrave\n      ? ((evGrave.endereco ? evGrave.endereco + ', ' : '') + (evGrave.cidade || '') + (evGrave.estado ? '/' + evGrave.estado : '')).trim().replace(/^,\\s*/, '')\n      : 'local nao registrado';\n    const nivel = piorDados.velMax >= 120 ? '🔴 CRITICO' : piorDados.velMax >= 100 ? '🟠 ALTO' : '🟡 MODERADO';\n    resumo = nivel + ' — Veiculo <strong>' + piorPlaca + '</strong> (' + piorDados.provedor + ') com <strong>' + piorDados.qtd + ' alerta(s)</strong>. '\n  + 'Pico de <strong>' + piorDados.velMax + ' km/h</strong>'\n  + (local ? ' em <em>' + local + '</em>' : '')\n  + '.';\n  } else {\n    resumo = '✅ Nenhum veiculo com padrao critico identificado.';\n  }\n\n  // E-mails centralizados do Banco de Dados (DW)\n  const emailDestinoFinal = evs[0].email_destino_db || 'torredecontrole@gritsch.com.br';\n  const ccParts = [];\n  if (evs[0].email_cc_db) ccParts.push(evs[0].email_cc_db);\n  if (evs[0].cc_regional_db) ccParts.push(evs[0].cc_regional_db);\n  if (evs[0].cc_global_db) ccParts.push(evs[0].cc_global_db);\n  const emailCCFinal = ccParts.join(';').split(/[;,]+/).map(s => s.trim()).filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(',');\n\n  results.push({ json: {\n    filial,\n    dataRef,\n    totalEventos: total,\n    velMax,\n    velMedia,\n    tabelaPlacas,\n    topOcorrencias: topOc,\n    resumoAnalitico: resumo,\n    emailDestino: emailDestinoFinal,\n    emailCC: emailCCFinal,\n    consolidadoDestinatarios: evs[0].consolidado_destinatarios_db || 'jefferson@gritsch.com.br',\n    consolidadoCC: evs[0].consolidado_cc_db || 'sandro@gritsch.com.br,torredecontrole@gritsch.com.br,flavio@gritsch.com.br,fabio.pepplow@gritsch.com.br'\n  }});\n}\n\nreturn results;"
+      },
+      "id": "ee728f48-9668-4133-84e3-ae4d3ef37c22",
+      "name": "14 - Agrupar por Filial + KPIs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3360,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -3136,
+        96
+      ],
+      "id": "b4da6fb8-e3aa-41dd-b563-d231cbf4ddd8",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ===========================================================================\n// 18 - Gerar HTML Email  (identidade visual Grupo Gritsch, v1.0 de 19/08/2026)\n//\n// Estrutura e dados IDENTICOS a versao aprovada. Mudou so a camada visual,\n// para o design system oficial.\n//\n// PALETA (secao 5 do documento):\n//   AZUL GRITSCH    #213035  titulo, numero em destaque\n//   VINHO GRITSCH   #8E2E2F  faixa de secao, cabecalho de tabela, divisoria\n//   VERMELHO ALERTA #FA1126  valor fora da meta\n//   CRITICO         #5A181C  desvio que exige acao imediata\n//   ATENCAO         #E8A33D  faixa intermediaria\n//   POSITIVO        #13880D  dentro da meta  (NAO usar em box de KPI)\n//   CINZA           #4E4D4D  rotulo e texto secundario\n//   CINZA BORDA     #BFBFBF  borda de box e card\n//   CINZA REGUA     #E2E2E2  borda interna de tabela\n//   CINZA FUNDO     #F2F2F2  fundo\n//\n// REGRAS DO DOCUMENTO APLICADAS:\n//   - rotulo SEMPRE em caixa alta, 14 px, #4E4D4D, nunca colorido (7.2)\n//   - rotulo em cima, numero embaixo (6.4)\n//   - o verde nunca entra em box de KPI (5.3)\n//   - cabecalho de tabela em #8E2E2F com texto branco (9.1)\n//   - borda de celula 1,6 px #E2E2E2; borda de card 1,6 px #BFBFBF (9.1)\n//   - numero em formato brasileiro, ponto no milhar (6.5)\n//   - data em dd/mm/aaaa (6.5)\n//   - nenhum componente com sombra (2.4)\n//\n// ADAPTACOES DELIBERADAS PARA E-MAIL (o design system e para slide 1920x1080):\n//   - Roboto Condensed com fallback 'Arial Narrow', Arial: Outlook nao carrega\n//     webfont, e sem fallback condensado o layout quebraria a largura\n//   - corpos reduzidos proporcionalmente (H1 32->24, CORPO 18->13): 1920 px de\n//     slide contra 700 px de e-mail\n//   - layout em <table>, nao grid/flex, exigencia de cliente de e-mail\n// ===========================================================================\n\nconst d = $json;\n\n// Formato brasileiro, secao 6.5\nconst fmtNum = (n) => String(n ?? 0).replace(/\\B(?=(\\d{3})+(?!\\d))/g, '.');\nconst fmtDec = (n) => String(n ?? 0).replace('.', ',');\n\n// --- Paleta oficial -------------------------------------------------------\nconst AZUL      = '#213035';\nconst VINHO     = '#8E2E2F';\nconst ALERTA    = '#FA1126';\nconst CRITICO   = '#5A181C';\nconst ATENCAO   = '#E8A33D';\nconst CINZA     = '#4E4D4D';\nconst BORDA     = '#BFBFBF';\nconst REGUA     = '#E2E2E2';\nconst FUNDO     = '#F2F2F2';\nconst BRANCO    = '#FFFFFF';\n\nconst FONTE = \"'Roboto Condensed','Arial Narrow',Arial,sans-serif\";\n\n// Duas versoes da marca, porque o fundo muda: a colorida (cinza + vinho) no\n// cabecalho branco, a branca no rodape azul. Usar a branca em cima deixaria a\n// logo invisivel. Ambas ficam a ESQUERDA, que e o padrao da empresa.\nconst LOGO_ESCURA = 'https://gritsch.com.br/wp-content/uploads/2022/03/logomarca-1_gritsch-1.png';\nconst LOGO_BRANCA = 'https://gritsch.com.br/wp-content/uploads/2023/07/logo_branca1080.png';\n\n// Severidade do excesso. Todo evento aqui JA esta acima do limite da classe,\n// entao nenhum e \"positivo\" — a graduacao vai de atencao a critico.\nconst corVelocidade = (v) => (v >= 140 ? CRITICO : v >= 120 ? ALERTA : ATENCAO);\n\n// Badge de origem. Cores de marca, nao decorativas.\nconst badgeOrigem = (p) => {\n  const prov = p || '3STEC';\n  const cor = prov === '3STEC' ? AZUL : prov === 'OMNILINK' ? CINZA : VINHO;\n  return '<span style=\"display:inline-block;padding:3px 8px;font-size:11px;font-weight:700;'\n       + 'color:' + BRANCO + ';background:' + cor + ';border-radius:4px;'\n       + 'font-family:' + FONTE + '\">' + prov + '</span>';\n};\n\n// --- Componentes ----------------------------------------------------------\nconst th = (txt, align) =>\n  '<th style=\"padding:10px 12px;text-align:' + (align || 'left') + ';font-size:12px;'\n  + 'font-weight:700;text-transform:uppercase;color:' + BRANCO + ';background:' + VINHO + ';'\n  + 'font-family:' + FONTE + '\">' + txt + '</th>';\n\nconst td = (conteudo, align, cor, peso) =>\n  '<td style=\"padding:10px 12px;border-bottom:1.6px solid ' + REGUA + ';font-size:13px;'\n  + 'text-align:' + (align || 'left') + ';color:' + (cor || CINZA) + ';'\n  + 'font-weight:' + (peso || '400') + ';font-family:' + FONTE + '\">' + conteudo + '</td>';\n\n// Box de KPI, secao 7: rotulo em caixa alta em cima, numero embaixo\nconst boxKpi = (rotulo, valor, unidade, corNumero) =>\n  '<td width=\"33%\" valign=\"top\" style=\"padding:0 8px\">'\n  + '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:' + BRANCO + ';'\n  + 'border:1.6px solid ' + BORDA + ';border-radius:12px\"><tr><td style=\"padding:14px 20px\">'\n  + '<div style=\"font-size:12px;font-weight:700;text-transform:uppercase;color:' + CINZA + ';'\n  + 'font-family:' + FONTE + '\">' + rotulo + '</div>'\n  + '<div style=\"font-size:26px;font-weight:700;color:' + (corNumero || AZUL) + ';margin-top:4px;'\n  + 'font-family:' + FONTE + '\">' + valor\n  + (unidade ? '<span style=\"font-size:13px;font-weight:400;color:' + CINZA + '\"> ' + unidade + '</span>' : '')\n  + '</div></td></tr></table></td>';\n\n// Faixa de secao, secao 7.5: 38 px, vinho, raio 10 px so no topo\nconst faixaSecao = (titulo) =>\n  '<tr><td style=\"padding:26px 32px 0\">'\n  + '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr>'\n  + '<td style=\"background:' + VINHO + ';border-radius:10px 10px 0 0;padding:9px 20px;'\n  + 'font-size:14px;font-weight:700;color:' + BRANCO + ';font-family:' + FONTE + '\">'\n  + titulo + '</td></tr></table></td></tr>';\n\n// --- Caixa de resumo ------------------------------------------------------\n// O node 14 monta o texto ja com <strong>/<em> e um emoji de nivel na frente.\n// O emoji sai: o nivel passa a ser cor + rotulo, que e como o design system\n// trata severidade (secao 5.3). O texto em si e preservado como veio.\nconst resumoTxt = String(d.resumoAnalitico || '');\nconst ehOk = /^\\s*(✅|&#9989;)/.test(resumoTxt);\nconst nivel = ehOk        ? 'Sem padrão crítico'\n            : /CRITICO/i.test(resumoTxt) ? 'Crítico'\n            : /ALTO/i.test(resumoTxt)    ? 'Alto'\n            : 'Moderado';\nconst corNivel = ehOk        ? POSITIVO\n               : /CRITICO/i.test(resumoTxt) ? ALERTA\n               : ATENCAO;\nconst corpoResumo = resumoTxt\n  .replace(/^[\\s✀-➿\\uD83C-􏰀-\\uDFFF☀-⛿️]+/u, '')\n  .replace(/^(CRITICO|ALTO|MODERADO)\\s*[—-]\\s*/i, '')\n  .trim();\n\nconst boxResumo = corpoResumo\n  ? '<tr><td style=\"padding:22px 32px 0\">'\n    + '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:' + FUNDO + ';'\n    + 'border-left:4px solid ' + corNivel + ';border-radius:0 8px 8px 0\">'\n    + '<tr><td style=\"padding:16px 22px\">'\n    + '<div style=\"font-size:11px;font-weight:700;text-transform:uppercase;color:' + CINZA + ';'\n    + 'font-family:' + FONTE + '\">Leitura do período · ' + nivel + '</div>'\n    + '<div style=\"font-size:14px;color:' + CINZA + ';margin-top:7px;line-height:1.7;'\n    + 'font-family:' + FONTE + '\">' + corpoResumo + '</div>'\n    + '</td></tr></table></td></tr>'\n  : '';\n\n// --- Linhas das tabelas ---------------------------------------------------\nlet rowsTop = '';\nfor (const o of (d.topOcorrencias || [])) {\n  const v = o.velocidade || 0;\n  const modelo = (d.tabelaPlacas || []).find(x => x.placa === o.placa)?.modelo || '—';\n  rowsTop += '<tr>'\n    + td(o.placa, 'left', AZUL, '700')\n    + td(modelo, 'left')\n    + td(badgeOrigem(o.origem), 'center')\n    + td(fmtDec(v) + ' km/h', 'right', corVelocidade(v), '700')\n    + td(o.data || '—', 'left')\n    + td(o.local || o.cidade || '—', 'left')\n    + '</tr>';\n}\n\nlet rowsPlacas = '';\nfor (const p of (d.tabelaPlacas || [])) {\n  const v = p.velMax || 0;\n  rowsPlacas += '<tr>'\n    + td(p.placa, 'left', AZUL, '700')\n    + td(p.modelo || '—', 'left')\n    + td(badgeOrigem(p.provedor), 'center')\n    + td(fmtNum(p.qtd), 'center')\n    + td(fmtDec(v) + ' km/h', 'right', corVelocidade(v), '700')\n    + '</tr>';\n}\n\nconst tabela = (cabecalhos, linhas) =>\n  '<tr><td style=\"padding:0 32px\">'\n  + '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1.6px solid ' + BORDA + ';'\n  + 'border-top:none;border-radius:0 0 12px 12px;background:' + BRANCO + '\">'\n  + '<tr>' + cabecalhos + '</tr>' + linhas + '</table></td></tr>';\n\n// --- Documento ------------------------------------------------------------\nconst html = '<!DOCTYPE html><html lang=\"pt-BR\"><head><meta charset=\"UTF-8\">'\n+ '<meta name=\"viewport\" content=\"width=device-width,initial-scale=1.0\">'\n+ '<link href=\"https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@400;600;700&display=swap\" rel=\"stylesheet\">'\n+ '</head><body style=\"margin:0;padding:0;background:' + FUNDO + ';font-family:' + FONTE + '\">'\n\n+ '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:' + FUNDO + ';padding:28px 0\">'\n+ '<tr><td align=\"center\">'\n+ '<table width=\"700\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:700px;width:100%;'\n+ 'background:' + BRANCO + ';border:1.6px solid ' + BORDA + ';border-radius:12px\">'\n\n// Cabecalho: marca a esquerda, contexto ao lado, referencia a direita.\n// Fechado pela divisoria de 3 px em vinho (secao 3.5).\n+ '<tr><td style=\"padding:24px 32px 18px;border-bottom:3px solid ' + VINHO + '\">'\n+ '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr>'\n+ '<td valign=\"middle\" width=\"140\" style=\"padding-right:22px\">'\n+ '<img src=\"' + LOGO_ESCURA + '\" width=\"128\" style=\"display:block;width:128px;height:auto\" alt=\"Grupo Gritsch\">'\n+ '</td>'\n+ '<td valign=\"middle\">'\n+ '<div style=\"font-size:12px;font-weight:700;text-transform:uppercase;color:' + CINZA + '\">Torre de Controle</div>'\n+ '<div style=\"font-size:23px;font-weight:600;color:' + AZUL + ';margin-top:4px\">Relatório de Velocidade</div>'\n+ '<div style=\"font-size:13px;color:' + CINZA + ';margin-top:3px\">' + (d.filial || '—') + '</div>'\n+ '</td>'\n+ '<td valign=\"middle\" align=\"right\">'\n+ '<div style=\"font-size:12px;font-weight:700;text-transform:uppercase;color:' + CINZA + '\">Referência</div>'\n+ '<div style=\"font-size:13px;color:' + CINZA + ';margin-top:6px\">' + (d.dataRef || '—') + '</div>'\n+ '</td>'\n+ '</tr></table></td></tr>'\n\n// Fileira de KPI (7.4). Velocidade maxima ganha cor so quando e desvio.\n+ '<tr><td style=\"padding:24px 24px 4px\">'\n+ '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr>'\n+ boxKpi('Eventos', fmtNum(d.totalEventos), '', AZUL)\n+ boxKpi('Velocidade máxima', fmtDec(d.velMax), 'km/h', (d.velMax >= 120 ? ALERTA : AZUL))\n+ boxKpi('Velocidade média', fmtDec(d.velMedia), 'km/h', AZUL)\n+ '</tr></table></td></tr>'\n\n+ boxResumo\n\n+ faixaSecao('Top 10 ocorrências mais graves')\n+ tabela(th('Placa') + th('Modelo') + th('Origem', 'center')\n       + th('Velocidade', 'right') + th('Data/hora') + th('Local'), rowsTop)\n\n+ faixaSecao('Alertas por placa (Top 15)')\n+ tabela(th('Placa') + th('Modelo') + th('Origem', 'center')\n       + th('Qtd', 'center') + th('Pico', 'right'), rowsPlacas)\n\n// Rodape institucional, logo branca sobre azul da marca\n+ '<tr><td style=\"padding:24px 32px;background:' + AZUL + ';border-radius:0 0 10px 10px\">'\n+ '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr>'\n+ '<td valign=\"middle\">'\n+ '<img src=\"' + LOGO_BRANCA + '\" width=\"110\" style=\"display:block;width:110px;height:auto\" alt=\"Gritsch\">'\n+ '</td>'\n+ '<td valign=\"middle\" align=\"right\" style=\"font-size:11px;color:' + BRANCO + ';line-height:1.7\">'\n+ 'Relatório automático da Torre de Controle<br>'\n+ 'Fontes: 3STEC, Nuxeo e Omnilink<br>'\n+ 'torredecontrole@gritsch.com.br'\n+ '</td>'\n+ '</tr></table></td></tr>'\n\n+ '</table></td></tr></table></body></html>';\n\nreturn [{ json: { ...d, htmlEmail: html } }];\n"
+      },
+      "id": "ad82426c-645d-4755-87d6-347c4930a0ff",
+      "name": "18 - Gerar HTML Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2912,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "naoresponda@gritsch.com.br",
+        "toEmail": "={{ $json.emailDestino }}",
+        "subject": "=Relatorio Diario Velocidade | {{ $json.filial }} | {{ $json.dataRef }}",
+        "html": "={{ $json.htmlEmail }}",
+        "options": {
+          "appendAttribution": false,
+          "ccEmail": "={{ $json.emailCC }}"
+        }
+      },
+      "id": "63e2570f-1b11-41a0-aece-2ec2758aef79",
+      "name": "19 - Enviar Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        -2688,
+        128
+      ],
+      "credentials": {
+        "smtp": {
+          "id": "PQ487x2sKWu1B4l2",
+          "name": "Email - naoresponda@gritsch.com.br"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Consolida dados de TODAS as filiais para o email geral pro Gabriel\n// Pega os dados do node 14 (que agrupou por filial antes do loop)\nconst filiais = $('14 - Agrupar por Filial + KPIs').all();\nconst dataRef = $('02 - Calcular Periodo').first().json.dataRef;\n\n// Se não teve eventos no dia\nif (filiais.length === 0 || (filiais.length === 1 && filiais[0].json._semEventos)) {\n  return [{ json: {\n    _semEventos: true,\n    dataRef: dataRef,\n    totalFiliais: 0,\n    totalEventosGeral: 0,\n    velMaxGeral: 0,\n    velMediaGeral: 0,\n    rankingFiliais: [],\n    piorOfensorGeral: null,\n    consolidadoDestinatarios: filiais[0]?.json?.consolidadoDestinatarios || 'jefferson@gritsch.com.br',\n    consolidadoCC: filiais[0]?.json?.consolidadoCC || 'sandro@gritsch.com.br,torredecontrole@gritsch.com.br,flavio@gritsch.com.br,fabio.pepplow@gritsch.com.br'\n  }}];\n}\n\n// Totais gerais\nlet totalEventosGeral = 0;\nlet velMaxGeral = 0;\nlet somaVelMedia = 0;\nlet countVelMedia = 0;\n\n// Ranking de filiais (ordenado por qtd de eventos)\nconst rankingFiliais = [];\n// Pior ofensor global (placa com mais alertas considerando todas as filiais)\nlet piorOfensorGeral = null;\n\nfor (const item of filiais) {\n  const f = item.json;\n  if (f._semEventos) continue;\n  \n  totalEventosGeral += (f.totalEventos || 0);\n  if ((f.velMax || 0) > velMaxGeral) velMaxGeral = f.velMax;\n  if (f.velMedia > 0) {\n    somaVelMedia += f.velMedia * f.totalEventos;\n    countVelMedia += f.totalEventos;\n  }\n  \n  // Top placa da filial (primeira da tabelaPlacas, que ja vem ordenada por qtd)\n  const topPlaca = (f.tabelaPlacas && f.tabelaPlacas[0]) || null;\n  \n  rankingFiliais.push({\n    filial: f.filial,\n    totalEventos: f.totalEventos || 0,\n    velMax: f.velMax || 0,\n    velMedia: f.velMedia || 0,\n    qtdPlacasEnvolvidas: (f.tabelaPlacas || []).length,\n    topPlaca: topPlaca ? {\n      placa: topPlaca.placa,\n      modelo: topPlaca.modelo || '',\n      qtd: topPlaca.qtd,\n      velMax: topPlaca.velMax\n    } : null\n  });\n  \n  // Candidato a pior ofensor global\n  if (topPlaca) {\n    if (!piorOfensorGeral || topPlaca.qtd > piorOfensorGeral.qtd) {\n      piorOfensorGeral = {\n        placa: topPlaca.placa,\n        modelo: topPlaca.modelo || '',\n        qtd: topPlaca.qtd,\n        velMax: topPlaca.velMax,\n        filial: f.filial\n      };\n    }\n  }\n}\n\nrankingFiliais.sort((a, b) => b.totalEventos - a.totalEventos);\n\nconst velMediaGeral = countVelMedia > 0 ? Math.round((somaVelMedia / countVelMedia) * 100) / 100 : 0;\n\nreturn [{ json: {\n  dataRef: dataRef,\n  totalFiliais: rankingFiliais.length,\n  totalEventosGeral: totalEventosGeral,\n  velMaxGeral: velMaxGeral,\n  velMediaGeral: velMediaGeral,\n  rankingFiliais: rankingFiliais,\n  piorOfensorGeral: piorOfensorGeral,\n  consolidadoDestinatarios: filiais[0]?.json?.consolidadoDestinatarios || 'jefferson@gritsch.com.br',\n  consolidadoCC: filiais[0]?.json?.consolidadoCC || 'sandro@gritsch.com.br,torredecontrole@gritsch.com.br,flavio@gritsch.com.br,fabio.pepplow@gritsch.com.br',\n  _semEventos: false\n}}];"
+      },
+      "id": "f2e146c5-7963-47b8-a17b-6908f9f77f38",
+      "name": "Consolidar Geral",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2912,
+        -96
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ===========================================================================\n// Gerar HTML Geral  (identidade visual Grupo Gritsch, v1.0)\n//\n// Consolidado de todas as filiais, para a diretoria. Mesma estrutura aprovada,\n// mesma paleta e mesmos componentes de \"18 - Gerar HTML Email\".\n// Ver aquele arquivo para o mapeamento completo secao-a-secao do design system.\n// ===========================================================================\n\nconst d = $json;\n\nconst fmtNum = (n) => String(n ?? 0).replace(/\\B(?=(\\d{3})+(?!\\d))/g, '.');\nconst fmtDec = (n) => String(n ?? 0).replace('.', ',');\n\nconst AZUL = '#213035', VINHO = '#8E2E2F', ALERTA = '#FA1126', CRITICO = '#5A181C';\nconst ATENCAO = '#E8A33D', POSITIVO = '#13880D', CINZA = '#4E4D4D';\nconst BORDA = '#BFBFBF', REGUA = '#E2E2E2', FUNDO = '#F2F2F2', BRANCO = '#FFFFFF';\n\nconst FONTE = \"'Roboto Condensed','Arial Narrow',Arial,sans-serif\";\n\n// Colorida no cabecalho branco, branca no rodape azul. Ambas a ESQUERDA.\nconst LOGO_ESCURA = 'https://gritsch.com.br/wp-content/uploads/2022/03/logomarca-1_gritsch-1.png';\nconst LOGO_BRANCA = 'https://gritsch.com.br/wp-content/uploads/2023/07/logo_branca1080.png';\n\nconst corVelocidade = (v) => (v >= 140 ? CRITICO : v >= 120 ? ALERTA : ATENCAO);\n\n// Destinatários do consolidado centralizados no Banco de Dados (torre.email_gritsch_config)\nconst emailDestinoConsolidado = d.consolidadoDestinatarios || 'jefferson@gritsch.com.br';\nconst emailCCConsolidado = d.consolidadoCC || 'sandro@gritsch.com.br,torredecontrole@gritsch.com.br,flavio@gritsch.com.br,fabio.pepplow@gritsch.com.br';\n\nconst abre = () =>\n  '<!DOCTYPE html><html lang=\"pt-BR\"><head><meta charset=\"UTF-8\">'\n  + '<meta name=\"viewport\" content=\"width=device-width,initial-scale=1.0\">'\n  + '<link href=\"https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@400;600;700&display=swap\" rel=\"stylesheet\">'\n  + '</head><body style=\"margin:0;padding:0;background:' + FUNDO + ';font-family:' + FONTE + '\">'\n  + '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:' + FUNDO + ';padding:28px 0\">'\n  + '<tr><td align=\"center\">'\n  + '<table width=\"760\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:760px;width:100%;'\n  + 'background:' + BRANCO + ';border:1.6px solid ' + BORDA + ';border-radius:12px\">';\n\n// Rodape institucional: logo branca sobre o azul da marca\nconst rodape = () =>\n  '<tr><td style=\"padding:24px 32px;background:' + AZUL + ';border-radius:0 0 10px 10px\">'\n  + '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr>'\n  + '<td valign=\"middle\">'\n  + '<img src=\"' + LOGO_BRANCA + '\" width=\"120\" style=\"display:block;width:120px;height:auto\" alt=\"Gritsch\">'\n  + '</td>'\n  + '<td valign=\"middle\" align=\"right\" style=\"font-size:11px;color:' + BRANCO + ';line-height:1.7\">'\n  + 'Relatório automático da Torre de Controle<br>'\n  + 'Fontes: 3STEC, Nuxeo e Omnilink<br>'\n  + 'torredecontrole@gritsch.com.br'\n  + '</td></tr></table></td></tr>'\n  + '</table></td></tr></table></body></html>';\n\nconst cabecalho = (subtitulo) =>\n  '<tr><td style=\"padding:24px 32px 18px;border-bottom:3px solid ' + VINHO + '\">'\n  + '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr>'\n  + '<td valign=\"middle\" width=\"140\" style=\"padding-right:22px\">'\n  + '<img src=\"' + LOGO_ESCURA + '\" width=\"128\" style=\"display:block;width:128px;height:auto\" alt=\"Grupo Gritsch\">'\n  + '</td>'\n  + '<td valign=\"middle\">'\n  + '<div style=\"font-size:12px;font-weight:700;text-transform:uppercase;color:' + CINZA + '\">Torre de Controle</div>'\n  + '<div style=\"font-size:23px;font-weight:600;color:' + AZUL + ';margin-top:4px\">Visão Geral Diária</div>'\n  + '<div style=\"font-size:13px;color:' + CINZA + ';margin-top:3px\">' + subtitulo + '</div>'\n  + '</td>'\n  + '<td valign=\"middle\" align=\"right\">'\n  + '<div style=\"font-size:12px;font-weight:700;text-transform:uppercase;color:' + CINZA + '\">Referência</div>'\n  + '<div style=\"font-size:13px;color:' + CINZA + ';margin-top:6px\">' + (d.dataRef || '—') + '</div>'\n  + '</td></tr></table></td></tr>';\n\n// ---------------------------------------------------------------------------\n// Dia sem evento. Unico lugar do relatorio onde o verde e correto: e um\n// resultado dentro da meta, e nao e box de KPI (regra 5.3 do design system).\n// ---------------------------------------------------------------------------\nif (d._semEventos) {\n  const vazio = abre()\n    + cabecalho('Consolidado de todas as filiais')\n    + '<tr><td style=\"padding:44px 32px;text-align:center\">'\n    + '<table cellpadding=\"0\" cellspacing=\"0\" align=\"center\" style=\"background:' + FUNDO + ';'\n    + 'border-left:4px solid ' + POSITIVO + ';border-radius:0 8px 8px 0\">'\n    + '<tr><td style=\"padding:18px 28px;text-align:left\">'\n    + '<div style=\"font-size:12px;font-weight:700;text-transform:uppercase;color:' + POSITIVO + '\">Dentro da meta</div>'\n    + '<div style=\"font-size:20px;font-weight:600;color:' + AZUL + ';margin-top:6px\">Nenhum evento de velocidade no período</div>'\n    + '<div style=\"font-size:13px;color:' + CINZA + ';margin-top:6px\">Toda a frota monitorada operou dentro do limite da sua classe.</div>'\n    + '</td></tr></table></td></tr>'\n    + rodape();\n  return [{ json: { ...d, htmlEmail: vazio, emailDestino: emailDestinoConsolidado, emailCC: emailCCConsolidado } }];\n}\n\n// --- KPI ------------------------------------------------------------------\nconst boxKpi = (rotulo, valor, unidade, corNumero) =>\n  '<td width=\"25%\" valign=\"top\" style=\"padding:0 6px\">'\n  + '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:' + BRANCO + ';'\n  + 'border:1.6px solid ' + BORDA + ';border-radius:12px\"><tr><td style=\"padding:14px 18px\">'\n  + '<div style=\"font-size:11px;font-weight:700;text-transform:uppercase;color:' + CINZA + ';'\n  + 'font-family:' + FONTE + '\">' + rotulo + '</div>'\n  + '<div style=\"font-size:26px;font-weight:700;color:' + (corNumero || AZUL) + ';margin-top:4px;'\n  + 'font-family:' + FONTE + '\">' + valor\n  + (unidade ? '<span style=\"font-size:12px;font-weight:400;color:' + CINZA + '\"> ' + unidade + '</span>' : '')\n  + '</div></td></tr></table></td>';\n\n// --- Pior ofensor ---------------------------------------------------------\nlet boxPior = '';\nif (d.piorOfensorGeral) {\n  const p = d.piorOfensorGeral;\n  const cor = corVelocidade(p.velMax);\n  const nivel = p.velMax >= 140 ? 'Crítico' : p.velMax >= 120 ? 'Alto' : 'Moderado';\n  boxPior = '<tr><td style=\"padding:22px 32px 0\">'\n    + '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:' + FUNDO + ';'\n    + 'border-left:4px solid ' + cor + ';border-radius:0 8px 8px 0\"><tr><td style=\"padding:16px 22px\">'\n    + '<div style=\"font-size:11px;font-weight:700;text-transform:uppercase;color:' + CINZA + '\">'\n    + 'Veículo com mais alertas · nível ' + nivel + '</div>'\n    + '<div style=\"font-size:15px;color:' + CINZA + ';margin-top:8px;line-height:1.7\">'\n    + '<span style=\"font-weight:700;color:' + AZUL + ';font-size:17px\">' + p.placa + '</span>'\n    + ' · ' + (p.modelo || '—') + ' · ' + (p.filial || '—') + '<br>'\n    + '<span style=\"font-weight:700;color:' + AZUL + '\">' + fmtNum(p.qtd) + '</span> alertas no período'\n    + ' · pico de <span style=\"font-weight:700;color:' + cor + '\">' + fmtDec(p.velMax) + ' km/h</span>'\n    + '</div></td></tr></table></td></tr>';\n}\n\n// --- Ranking --------------------------------------------------------------\nconst th = (txt, align) =>\n  '<th style=\"padding:10px 12px;text-align:' + (align || 'left') + ';font-size:12px;font-weight:700;'\n  + 'text-transform:uppercase;color:' + BRANCO + ';background:' + VINHO + ';font-family:' + FONTE + '\">' + txt + '</th>';\n\nconst td = (c, align, cor, peso) =>\n  '<td style=\"padding:10px 12px;border-bottom:1.6px solid ' + REGUA + ';font-size:13px;'\n  + 'text-align:' + (align || 'left') + ';color:' + (cor || CINZA) + ';font-weight:' + (peso || '400') + ';'\n  + 'font-family:' + FONTE + '\">' + c + '</td>';\n\nlet rowsFiliais = '', pos = 1;\nfor (const f of (d.rankingFiliais || [])) {\n  const topInfo = f.topPlaca ? f.topPlaca.placa + ' (' + f.topPlaca.qtd + 'x)' : '—';\n  rowsFiliais += '<tr>'\n    + td(pos, 'center', BORDA, '700')\n    + td(f.filial, 'left', AZUL, '700')\n    + td(fmtNum(f.totalEventos), 'center')\n    + td(f.qtdPlacasEnvolvidas, 'center')\n    + td(fmtDec(f.velMax) + ' km/h', 'right', corVelocidade(f.velMax), '700')\n    + td(topInfo, 'left')\n    + '</tr>';\n  pos++;\n}\n\nconst faixaSecao = (titulo) =>\n  '<tr><td style=\"padding:26px 32px 0\"><table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr>'\n  + '<td style=\"background:' + VINHO + ';border-radius:10px 10px 0 0;padding:9px 20px;'\n  + 'font-size:14px;font-weight:700;color:' + BRANCO + ';font-family:' + FONTE + '\">' + titulo + '</td>'\n  + '</tr></table></td></tr>';\n\nconst html = abre()\n  + cabecalho('Consolidado de todas as filiais')\n  + '<tr><td style=\"padding:24px 26px 4px\"><table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr>'\n  + boxKpi('Eventos totais', fmtNum(d.totalEventosGeral), '', AZUL)\n  + boxKpi('Filiais', fmtNum(d.totalFiliais), '', AZUL)\n  + boxKpi('Velocidade máxima', fmtDec(d.velMaxGeral), 'km/h', (d.velMaxGeral >= 120 ? ALERTA : AZUL))\n  + boxKpi('Velocidade média', fmtDec(d.velMediaGeral), 'km/h', AZUL)\n  + '</tr></table></td></tr>'\n  + boxPior\n  + faixaSecao('Ranking entre filiais')\n  + '<tr><td style=\"padding:0 32px\">'\n  + '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1.6px solid ' + BORDA + ';'\n  + 'border-top:none;border-radius:0 0 12px 12px;background:' + BRANCO + '\">'\n  + '<tr>' + th('#', 'center') + th('Filial') + th('Eventos', 'center')\n  + th('Placas', 'center') + th('Pico', 'right') + th('Top alertas') + '</tr>'\n  + rowsFiliais + '</table></td></tr>'\n  + rodape();\n\nreturn [{ json: { ...d, htmlEmail: html, emailDestino: emailDestinoConsolidado, emailCC: emailCCConsolidado } }];\n"
+      },
+      "id": "00cacbc3-0912-42ab-9751-0afb7e148532",
+      "name": "Gerar HTML Geral",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2688,
+        -96
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "naoresponda@gritsch.com.br",
+        "toEmail": "={{ $json.emailDestino }}",
+        "subject": "=Visão Geral Diária | Torre de Controle | {{ $json.dataRef }}",
+        "html": "={{ $json.htmlEmail }}",
+        "options": {
+          "appendAttribution": false,
+          "ccEmail": "={{ $json.emailCC }}"
+        }
+      },
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        -2464,
+        -96
+      ],
+      "id": "78ae9243-9fee-471c-8e43-f29495da7197",
+      "name": "Enviar Consolidado",
+      "webhookId": "b94cfa15-2e4f-4835-a0a7-72b53aaeca4b",
+      "credentials": {
+        "smtp": {
+          "id": "PQ487x2sKWu1B4l2",
+          "name": "Email - naoresponda@gritsch.com.br"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "02 - Calcular Periodo": {
+      "main": [
+        [
+          {
+            "node": "03 - Buscar Alertas Consolidados SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "03 - Buscar Alertas Consolidados SQL": {
+      "main": [
+        [
+          {
+            "node": "14 - Agrupar por Filial + KPIs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "14 - Agrupar por Filial + KPIs": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [
+          {
+            "node": "Consolidar Geral",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "18 - Gerar HTML Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "18 - Gerar HTML Email": {
+      "main": [
+        [
+          {
+            "node": "19 - Enviar Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "19 - Enviar Email": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consolidar Geral": {
+      "main": [
+        [
+          {
+            "node": "Gerar HTML Geral",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gerar HTML Geral": {
+      "main": [
+        [
+          {
+            "node": "Enviar Consolidado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "01 - Schedule 07h30": {
+      "main": [
+        [
+          {
+            "node": "02 - Calcular Periodo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "2K04ENBN6GUGlQqC",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "f37a1c40-1dcb-43b0-8f93-3cf1766f6125",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fb581638443806838dcc4ad5d9ab57cd83fc9fe2e7f923a0752e9d8321c3faf5"
+  },
+  "id": "YJkcqabJQlqSSroz",
+  "tags": [
+    {
+      "updatedAt": "2026-04-24T18:35:08.808Z",
+      "createdAt": "2026-04-24T18:35:08.808Z",
+      "id": "EHG4FqrPM7zG3eYN",
+      "name": "torre-de-controle"
+    },
+    {
+      "updatedAt": "2026-04-24T18:35:08.809Z",
+      "createdAt": "2026-04-24T18:35:08.809Z",
+      "id": "qM6x0l0UABeuQwfU",
+      "name": "telemetria"
+    }
+  ]
+}

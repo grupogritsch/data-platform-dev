@@ -1,0 +1,91 @@
+{
+  "name": "GOLD - 15 - MV Ranking Veiculos",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-640, 0],
+      "id": "a1b2c3d4-0016-4000-8000-000000000001",
+      "name": "Executar Manualmente"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 7 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [-640, 200],
+      "id": "a1b2c3d4-0016-4000-8000-000000000002",
+      "name": "Refresh Diário"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- ============================================================\n-- gold_mv_ranking_veiculo\n-- Ranking de veículos por consumo, eficiência e suspeitas.\n-- Uma linha por placa. Período de referência: últimos 12 meses.\n--\n-- Métricas:\n--   CONSUMO    — total_litros, total_valor_liquido, preco_medio_ponderado\n--   EFICIÊNCIA — km/L vs referência do grupo, custo/km\n--                (positivo = melhor que ref; negativo = pior)\n--   SUSPEITAS  — flags históricas de gold_mv_abastecimentos_suspeitos\n--\n-- Filial e modelo: sempre a atribuição mais recente.\n-- ============================================================\nDROP MATERIALIZED VIEW IF EXISTS torre.gold_mv_ranking_veiculo CASCADE;\n\nCREATE MATERIALIZED VIEW torre.gold_mv_ranking_veiculo AS\nWITH\n-- Filial e grupo mais recente por placa (pode mudar com transferências)\nfilial_atual AS (\n  SELECT DISTINCT ON (placa)\n    placa,\n    filial_nome,\n    filial_estado,\n    filial_regiao,\n    grupo_veiculo\n  FROM torre.gold_truckpag_combustivel\n  WHERE NOT transacao_estornada\n    AND filial_nome IS NOT NULL\n    AND placa_tipo IS NULL\n  ORDER BY placa, data_transacao DESC\n),\n-- Consumo por placa — últimos 12 meses\n-- Arla excluído (não é propulsor, distorceria litros e preço)\nconsumo AS (\n  SELECT\n    placa,\n    COUNT(*)                                                        AS qtd_abastecimentos,\n    ROUND(SUM(litragem)::numeric, 1)                               AS total_litros,\n    ROUND(SUM(valor_liquido)::numeric, 2)                                  AS total_valor_liquido,\n    ROUND(SUM(valor_liquido)::numeric / NULLIF(SUM(litragem), 0), 4)       AS preco_medio_ponderado,\n    MAX(data)                                                       AS ultima_data_abastecimento\n  FROM torre.gold_truckpag_combustivel\n  WHERE NOT transacao_estornada\n    AND placa_tipo IS NULL\n    AND filial_nome IS NOT NULL\n    AND grupo_combustivel <> 'Arla'\n    AND litragem > 0\n    AND data >= CURRENT_DATE - INTERVAL '12 months'\n  GROUP BY placa\n),\n-- Eficiência por placa — agrega os meses da MV de eficiência (últimos 12m)\n-- Apenas meses com cobertura completa entram no km/L ponderado\neficiencia AS (\n  SELECT\n    placa,\n    MAX(km_litro_ref)                                               AS km_litro_ref,\n    ROUND(SUM(total_km)::numeric, 0)                               AS total_km,\n    ROUND(\n      SUM(total_km) FILTER (WHERE NOT cobertura_parcial)::numeric\n      / NULLIF(SUM(total_litros) FILTER (WHERE NOT cobertura_parcial), 0)\n    , 3)                                                            AS km_litro,\n    ROUND(\n      SUM(total_valor_liquido) FILTER (WHERE NOT cobertura_parcial)::numeric\n      / NULLIF(SUM(total_km) FILTER (WHERE NOT cobertura_parcial), 0)\n    , 4)                                                            AS custo_por_km,\n    COUNT(DISTINCT ano_mes)                                         AS meses_com_dados,\n    COUNT(DISTINCT ano_mes) FILTER (WHERE cobertura_parcial)        AS meses_cobertura_parcial\n  FROM torre.gold_mv_eficiencia_placa_mensal\n  WHERE ano_mes >= TO_CHAR(CURRENT_DATE - INTERVAL '12 months', 'YYYY-MM')\n  GROUP BY placa\n),\n-- Flags suspeitas por placa — histórico completo (já filtrado por faturas)\nsuspeitos AS (\n  SELECT\n    placa,\n    COUNT(*)                                                        AS qtd_flags,\n    SUM(score_risco)                                                AS score_total,\n    COUNT(*) FILTER (WHERE flag_litragem_alta)                     AS flags_litragem_alta,\n    COUNT(*) FILTER (WHERE flag_intervalo_curto)                   AS flags_intervalo_curto,\n    COUNT(*) FILTER (WHERE flag_preco_alto)                        AS flags_preco_alto,\n    COUNT(*) FILTER (WHERE flag_retorno_mesmo_posto)                     AS flags_retorno_posto,\n    COUNT(*) FILTER (WHERE flag_combustivel_errado)                AS flags_combustivel_errado\n  FROM torre.gold_mv_abastecimentos_suspeitos\n  GROUP BY placa\n)\nSELECT\n  c.placa,\n  v.modelo_raw                                                      AS modelo,\n  v.situacao_veiculo                                                AS situacao,\n  fa.filial_nome,\n  fa.filial_estado,\n  fa.filial_regiao,\n  fa.grupo_veiculo,\n  -- Consumo últimos 12 meses\n  c.qtd_abastecimentos,\n  c.total_litros,\n  c.total_valor_liquido,\n  c.preco_medio_ponderado,\n  c.ultima_data_abastecimento,\n  -- Eficiência últimos 12 meses\n  e.km_litro_ref,\n  e.total_km,\n  e.km_litro,\n  e.custo_por_km,\n  e.meses_com_dados,\n  e.meses_cobertura_parcial,\n  -- Desvio vs referência do grupo\n  -- positivo = veículo mais eficiente que o esperado\n  -- negativo = veículo menos eficiente (consome mais que deveria)\n  CASE\n    WHEN e.km_litro IS NOT NULL AND e.km_litro_ref IS NOT NULL\n    THEN ROUND(\n      (e.km_litro - e.km_litro_ref) / NULLIF(e.km_litro_ref, 0) * 100\n    , 1)\n    ELSE NULL\n  END                                                               AS desvio_eficiencia_pct,\n  -- Suspeitas (histórico completo)\n  COALESCE(s.qtd_flags, 0)                                        AS qtd_flags_suspeitas,\n  COALESCE(s.score_total, 0)                                       AS score_suspeito_total,\n  COALESCE(s.flags_litragem_alta, 0)                              AS flags_litragem_alta,\n  COALESCE(s.flags_intervalo_curto, 0)                            AS flags_intervalo_curto,\n  COALESCE(s.flags_preco_alto, 0)                                 AS flags_preco_alto,\n  COALESCE(s.flags_retorno_posto, 0)                              AS flags_retorno_posto,\n  COALESCE(s.flags_combustivel_errado, 0)                         AS flags_combustivel_errado\nFROM consumo c\nLEFT JOIN torre.gold_dim_veiculo v   ON v.placa  = c.placa\nLEFT JOIN filial_atual fa            ON fa.placa = c.placa\nLEFT JOIN eficiencia e               ON e.placa  = c.placa\nLEFT JOIN suspeitos s                ON s.placa  = c.placa\nWITH DATA;\n\nCREATE INDEX idx_ranking_veiculo_filial\n  ON torre.gold_mv_ranking_veiculo (filial_nome);\nCREATE INDEX idx_ranking_veiculo_grupo\n  ON torre.gold_mv_ranking_veiculo (grupo_veiculo);\nCREATE INDEX idx_ranking_veiculo_valor\n  ON torre.gold_mv_ranking_veiculo (total_valor_liquido DESC);\nCREATE INDEX idx_ranking_veiculo_score\n  ON torre.gold_mv_ranking_veiculo (score_suspeito_total DESC);\nCREATE INDEX idx_ranking_veiculo_eficiencia\n  ON torre.gold_mv_ranking_veiculo (desvio_eficiencia_pct);\n\nSELECT 'MV gold_mv_ranking_veiculo criada' AS status;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-400, 100],
+      "id": "a1b2c3d4-0016-4000-8000-000000000010",
+      "name": "Criar MV",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- 1. Resumo geral\nSELECT\n  COUNT(*)                                                  AS total_placas,\n  COUNT(*) FILTER (WHERE situacao = 'Ativo')                AS placas_ativas,\n  COUNT(*) FILTER (WHERE situacao <> 'Ativo')               AS placas_inativas,\n  COUNT(*) FILTER (WHERE km_litro IS NOT NULL)              AS placas_com_eficiencia,\n  COUNT(*) FILTER (WHERE score_suspeito_total > 0)          AS placas_com_suspeitas,\n  ROUND(SUM(total_valor_liquido)::numeric, 2)                       AS valor_total_frota,\n  ROUND(SUM(total_litros)::numeric, 1)                      AS litros_total_frota\nFROM torre.gold_mv_ranking_veiculo;\n\n-- 2. Top 20 maiores consumidores em R$ (últimos 12 meses)\nSELECT\n  placa,\n  modelo,\n  situacao,\n  filial_nome,\n  grupo_veiculo,\n  qtd_abastecimentos,\n  total_litros,\n  total_valor_liquido,\n  preco_medio_ponderado,\n  km_litro,\n  km_litro_ref,\n  desvio_eficiencia_pct,\n  custo_por_km,\n  score_suspeito_total,\n  qtd_flags_suspeitas\nFROM torre.gold_mv_ranking_veiculo\nORDER BY total_valor_liquido DESC\nLIMIT 20;\n\n-- 3. Top 15 mais ineficientes (pior km/L vs referência do grupo)\n-- Mínimo 3 meses de dados para ser estatisticamente válido\nSELECT\n  placa,\n  modelo,\n  filial_nome,\n  grupo_veiculo,\n  km_litro_ref,\n  km_litro,\n  desvio_eficiencia_pct,\n  meses_com_dados,\n  meses_cobertura_parcial,\n  custo_por_km,\n  total_km,\n  total_valor_liquido\nFROM torre.gold_mv_ranking_veiculo\nWHERE km_litro IS NOT NULL\n  AND meses_com_dados >= 3\n  AND meses_cobertura_parcial = 0\nORDER BY desvio_eficiencia_pct ASC\nLIMIT 15;\n\n-- 4. Top 15 com maior score de suspeitas (histórico)\nSELECT\n  placa,\n  modelo,\n  filial_nome,\n  grupo_veiculo,\n  total_valor_liquido,\n  score_suspeito_total,\n  qtd_flags_suspeitas,\n  flags_litragem_alta,\n  flags_intervalo_curto,\n  flags_preco_alto,\n  flags_retorno_posto,\n  flags_combustivel_errado\nFROM torre.gold_mv_ranking_veiculo\nWHERE score_suspeito_total > 0\nORDER BY score_suspeito_total DESC\nLIMIT 15;\n\n-- 5. Resumo por grupo de veículo\nSELECT\n  grupo_veiculo,\n  COUNT(*)                                                  AS qtd_placas,\n  ROUND(SUM(total_valor_liquido)::numeric, 2)                       AS total_valor_liquido,\n  ROUND(SUM(total_litros)::numeric, 1)                      AS total_litros,\n  ROUND(AVG(total_valor_liquido) FILTER (WHERE total_valor_liquido > 0)::numeric, 2) AS valor_medio_placa,\n  ROUND(\n    SUM(total_km) FILTER (WHERE meses_cobertura_parcial = 0)::numeric\n    / NULLIF(SUM(total_litros) FILTER (WHERE meses_cobertura_parcial = 0), 0)\n  , 3)                                                      AS km_litro_grupo,\n  MAX(km_litro_ref)                                         AS km_litro_ref,\n  SUM(score_suspeito_total)                                 AS score_suspeito_total\nFROM torre.gold_mv_ranking_veiculo\nGROUP BY grupo_veiculo\nORDER BY total_valor_liquido DESC;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-160, 100],
+      "id": "a1b2c3d4-0016-4000-8000-000000000011",
+      "name": "Validar",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Executar Manualmente": {
+      "main": [[{"node": "Criar MV", "type": "main", "index": 0}]]
+    },
+    "Refresh Diário": {
+      "main": [[{"node": "Criar MV", "type": "main", "index": 0}]]
+    },
+    "Criar MV": {
+      "main": [[{"node": "Validar", "type": "main", "index": 0}]]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "a1b2c3d4-0016-4000-8000-000000000000",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fb581638443806838dcc4ad5d9ab57cd83fc9fe2e7f923a0752e9d8321c3faf5"
+  },
+  "id": "GOLD015mvRankingVeiculos",
+  "tags": [
+    {"name": "gold"},
+    {"name": "torre-de-controle"}
+  ]
+}

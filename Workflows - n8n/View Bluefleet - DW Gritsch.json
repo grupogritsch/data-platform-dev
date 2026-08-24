@@ -1,0 +1,519 @@
+{
+  "name": "View Bluefleet - DW Gritsch",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 5 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -600,
+        0
+      ],
+      "id": "906fca49-6940-47e8-b861-61ae29427574",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "ALTER TABLE torre.bluefleet_relatorio_manutencao ADD COLUMN IF NOT EXISTS fornecedor TEXT, ADD COLUMN IF NOT EXISTS odometro_atual NUMERIC(12,0);",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -400,
+        0
+      ],
+      "id": "ddl-colunas-001",
+      "name": "DDL - Atualizar Colunas",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const today = new Date();\nconst startDate = new Date();\nstartDate.setDate(startDate.getDate() - 365);\nconst endDate = new Date(today.getTime() + 86400000);\n\nconst sd = startDate.toISOString().split('T')[0];\nconst ed = endDate.toISOString().split('T')[0];\n\nconst staticData = $getWorkflowStaticData('global');\nstaticData.start_date = sd;\nstaticData.end_date = ed;\nstaticData.currentOffset = 0;\n\nreturn [{\n  json: {\n    start_date: sd,\n    end_date: ed,\n    offset: 0\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -200,
+        0
+      ],
+      "id": "inicializar-001",
+      "name": "Inicializar"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=SELECT \n    h.IdItemOrdemServico AS id_item_os,\n    h.IdNF AS id_nf,\n    h.NumeroNF AS numero_nf,\n    h.OrdemServico AS ordem_servico,\n    h.Ocorrencia AS ocorrencia,\n    h.Placa AS placa,\n    h.DescricaoItem AS descricao_item,\n    h.TipoItem AS tipo_item,\n    h.Tipo AS tipo,\n    h.DescricaoCompleta AS descricao_completa,\n    h.Quantidade AS quantidade,\n    h.ValorUnitario AS valor_unitario,\n    h.ValorTotal AS valor_total,\n    h.UnidadeDeFaturamento AS unidade_de_faturamento,\n    h.FilialOperacional AS filial_operacional,\n    h.SituacaoVeiculo AS situacao_veiculo,\n    h.DataCriacaoOcorrencia AS data_criacao_ocorrencia,\n    h.DataEmissao AS data_emissao,\n    h.DataCriacao AS data_criacao,\n    h.UnidadeDeFaturamentoContrato AS unidade_de_faturamento_contrato,\n    h.MovFilialDestino AS mov_filial_destino,\n    h.DataVenda AS data_venda,\n    h.FilialOperacionalOcorrencia AS filial_operacional_ocorrencia,\n    h.FILIAL AS filial,\n    h.Natureza_Correta AS natureza_correta,\n    h.CriadoPor AS criado_por,\n    om.Fornecedor AS fornecedor,\n    om.OdometroAtual AS odometro_atual\nFROM dbo.vw_RelatorioFKM_Historico h\nLEFT JOIN dbo.OcorrenciasManutencao om \n  ON om.IdOcorrencia = TRY_CAST(h.Ocorrencia AS BIGINT)\nWHERE h.DataCriacao >= '{{ $json.start_date }}' \n  AND h.DataCriacao < '{{ $json.end_date }}'\nORDER BY h.IdItemOrdemServico\nOFFSET {{ $json.offset }} ROWS\nFETCH NEXT 20000 ROWS ONLY;"
+      },
+      "type": "n8n-nodes-base.microsoftSql",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "buscar-lote-001",
+      "name": "Buscar Lote",
+      "credentials": {
+        "microsoftSql": {
+          "id": "EOmaFSibEAV8IGsL",
+          "name": "SQLserver- Bluefleet"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "schema": {
+          "__rl": true,
+          "value": "torre",
+          "mode": "name"
+        },
+        "table": {
+          "__rl": true,
+          "value": "bluefleet_relatorio_manutencao",
+          "mode": "list",
+          "cachedResultName": "bluefleet_relatorio_manutencao"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "id_item_os"
+          ],
+          "schema": [
+            {
+              "id": "id_item_os",
+              "displayName": "id_item_os",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "id_nf",
+              "displayName": "id_nf",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "numero_nf",
+              "displayName": "numero_nf",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "ordem_servico",
+              "displayName": "ordem_servico",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "ocorrencia",
+              "displayName": "ocorrencia",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "placa",
+              "displayName": "placa",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "descricao_item",
+              "displayName": "descricao_item",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "tipo_item",
+              "displayName": "tipo_item",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "tipo",
+              "displayName": "tipo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "descricao_completa",
+              "displayName": "descricao_completa",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "quantidade",
+              "displayName": "quantidade",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "valor_unitario",
+              "displayName": "valor_unitario",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "valor_total",
+              "displayName": "valor_total",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "unidade_de_faturamento",
+              "displayName": "unidade_de_faturamento",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "filial_operacional",
+              "displayName": "filial_operacional",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "situacao_veiculo",
+              "displayName": "situacao_veiculo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "data_criacao_ocorrencia",
+              "displayName": "data_criacao_ocorrencia",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "data_emissao",
+              "displayName": "data_emissao",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "data_criacao",
+              "displayName": "data_criacao",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "unidade_de_faturamento_contrato",
+              "displayName": "unidade_de_faturamento_contrato",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "mov_filial_destino",
+              "displayName": "mov_filial_destino",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "data_venda",
+              "displayName": "data_venda",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "filial_operacional_ocorrencia",
+              "displayName": "filial_operacional_ocorrencia",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "filial",
+              "displayName": "filial",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "natureza_correta",
+              "displayName": "natureza_correta",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "criado_por",
+              "displayName": "criado_por",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "atualizado_em",
+              "displayName": "atualizado_em",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "fornecedor",
+              "displayName": "fornecedor",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "odometro_atual",
+              "displayName": "odometro_atual",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        200,
+        0
+      ],
+      "id": "inserir-dw-001",
+      "name": "Inserir no DW",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const count = $input.all().length;\n\nconst staticData = $getWorkflowStaticData('global');\nconst currentOffset = staticData.currentOffset || 0;\nconst nextOffset = currentOffset + count;\n\nstaticData.currentOffset = nextOffset;\n\nreturn [{\n  json: {\n    start_date: staticData.start_date,\n    end_date: staticData.end_date,\n    offset: nextOffset,\n    count: count\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        0
+      ],
+      "id": "proximo-lote-001",
+      "name": "Proximo Lote"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "check-count",
+              "leftValue": "={{ $json.count }}",
+              "rightValue": 20000,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        600,
+        0
+      ],
+      "id": "tem-mais-001",
+      "name": "Tem Mais?"
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "DDL - Atualizar Colunas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DDL - Atualizar Colunas": {
+      "main": [
+        [
+          {
+            "node": "Inicializar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Inicializar": {
+      "main": [
+        [
+          {
+            "node": "Buscar Lote",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar Lote": {
+      "main": [
+        [
+          {
+            "node": "Inserir no DW",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Inserir no DW": {
+      "main": [
+        [
+          {
+            "node": "Proximo Lote",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Proximo Lote": {
+      "main": [
+        [
+          {
+            "node": "Tem Mais?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tem Mais?": {
+      "main": [
+        [
+          {
+            "node": "Buscar Lote",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "2K04ENBN6GUGlQqC",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "id": "2psOfQspBFmG1aQ8",
+  "tags": []
+}

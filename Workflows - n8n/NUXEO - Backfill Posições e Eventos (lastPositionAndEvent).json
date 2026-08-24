@@ -1,0 +1,259 @@
+{
+  "name": "NUXEO - Backfill Posições e Eventos (lastPositionAndEvent)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "e7a7a707-0001-4000-8000-000000000001",
+      "name": "Executar Manualmente (Backfill lastPositionAndEvent)",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -3800,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.nuxeo.com.br/rest/user/login/",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"client\": \"Gritsch\",\n  \"login\": \"Gritsch\",\n  \"psw\": \"gr1tsch\"\n}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "e7a7a707-0001-4000-8000-000000000002",
+      "name": "01 - Nuxeo Auth",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -3580,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const token = $input.first().json.token;\n\n// Janelas Mensais de 01/01/2026 ate hoje\nconst janelas = [\n  { begin: '01/01/2026 00:00:00', end: '31/01/2026 23:59:59' },\n  { begin: '01/02/2026 00:00:00', end: '28/02/2026 23:59:59' },\n  { begin: '01/03/2026 00:00:00', end: '31/03/2026 23:59:59' },\n  { begin: '01/04/2026 00:00:00', end: '30/04/2026 23:59:59' },\n  { begin: '01/05/2026 00:00:00', end: '31/05/2026 23:59:59' },\n  { begin: '01/06/2026 00:00:00', end: '30/06/2026 23:59:59' },\n  { begin: '01/07/2026 00:00:00', end: '31/07/2026 23:59:59' }\n];\n\nconst requests = [];\nfor (const j of janelas) {\n  const beginEnc = encodeURIComponent(j.begin);\n  const endEnc = encodeURIComponent(j.end);\n  requests.push({\n    json: {\n      token,\n      begin: j.begin,\n      end: j.end,\n      url: `https://api.nuxeo.com.br/rest/report/lastPositionAndEvent/?begin=${beginEnc}&end=${endEnc}`\n    }\n  });\n}\n\nreturn requests;"
+      },
+      "id": "e7a7a707-0001-4000-8000-000000000003",
+      "name": "02 - Gerar Janelas Mensais",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3360,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "e7a7a707-0001-4000-8000-000000000004",
+      "name": "03 - Loop por Mês (1 por vez)",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -3140,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Auth-Token",
+              "value": "={{ $json.token }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "id": "e7a7a707-0001-4000-8000-000000000005",
+      "name": "04 - GET lastPositionAndEvent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2920,
+        100
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst positions = response.positions || response.targets || response || [];\n\nif (!Array.isArray(positions) || positions.length === 0) {\n  return [{ json: { _sql: \"SELECT 0 AS inseridos;\", totalRecords: 0 } }];\n}\n\nconst esc = (v) => v != null ? String(v).replace(/'/g, \"''\") : null;\nconst valStr = (v) => v != null ? `'${esc(v)}'` : 'NULL';\nconst valNum = (v) => (v != null && !isNaN(v)) ? Number(v) : 'NULL';\nconst valBool = (v) => typeof v === 'boolean' ? (v ? 'TRUE' : 'FALSE') : 'NULL';\nconst valJson = (obj) => `'${JSON.stringify(obj).replace(/'/g, \"''\")}'::jsonb`;\n\nconst sqlStatements = [];\nsqlStatements.push(`\nCREATE SCHEMA IF NOT EXISTS bronze;\nCREATE TABLE IF NOT EXISTS bronze.nuxeo_posicao_eventos (\n    id BIGSERIAL PRIMARY KEY,\n    placa VARCHAR(20),\n    complemento TEXT,\n    serial VARCHAR(50),\n    endereco TEXT,\n    cidade VARCHAR(150),\n    estado VARCHAR(50),\n    pais VARCHAR(50),\n    latitude NUMERIC(10,6),\n    longitude NUMERIC(10,6),\n    data_gps TEXT,\n    ignicao BOOLEAN,\n    bloqueio BOOLEAN,\n    panico BOOLEAN,\n    velocidade NUMERIC(6,2),\n    bateria BOOLEAN,\n    antifurto TEXT,\n    qtd_eventos INT,\n    eventos_json JSONB,\n    payload_json JSONB,\n    ingested_at TIMESTAMPTZ DEFAULT NOW()\n);\n\nALTER TABLE bronze.nuxeo_posicao_eventos ADD COLUMN IF NOT EXISTS complemento TEXT;\nALTER TABLE bronze.nuxeo_posicao_eventos ADD COLUMN IF NOT EXISTS serial VARCHAR(50);\nALTER TABLE bronze.nuxeo_posicao_eventos ADD COLUMN IF NOT EXISTS endereco TEXT;\nALTER TABLE bronze.nuxeo_posicao_eventos ADD COLUMN IF NOT EXISTS cidade VARCHAR(150);\nALTER TABLE bronze.nuxeo_posicao_eventos ADD COLUMN IF NOT EXISTS estado VARCHAR(50);\nALTER TABLE bronze.nuxeo_posicao_eventos ADD COLUMN IF NOT EXISTS pais VARCHAR(50);\nALTER TABLE bronze.nuxeo_posicao_eventos ADD COLUMN IF NOT EXISTS latitude NUMERIC(10,6);\nALTER TABLE bronze.nuxeo_posicao_eventos ADD COLUMN IF NOT EXISTS longitude NUMERIC(10,6);\nALTER TABLE bronze.nuxeo_posicao_eventos ADD COLUMN IF NOT EXISTS data_gps TEXT;\nALTER TABLE bronze.nuxeo_posicao_eventos ADD COLUMN IF NOT EXISTS ignicao BOOLEAN;\nALTER TABLE bronze.nuxeo_posicao_eventos ADD COLUMN IF NOT EXISTS bloqueio BOOLEAN;\nALTER TABLE bronze.nuxeo_posicao_eventos ADD COLUMN IF NOT EXISTS panico BOOLEAN;\nALTER TABLE bronze.nuxeo_posicao_eventos ADD COLUMN IF NOT EXISTS velocidade NUMERIC(6,2);\nALTER TABLE bronze.nuxeo_posicao_eventos ADD COLUMN IF NOT EXISTS bateria BOOLEAN;\nALTER TABLE bronze.nuxeo_posicao_eventos ADD COLUMN IF NOT EXISTS antifurto TEXT;\nALTER TABLE bronze.nuxeo_posicao_eventos ADD COLUMN IF NOT EXISTS qtd_eventos INT;\nALTER TABLE bronze.nuxeo_posicao_eventos ADD COLUMN IF NOT EXISTS eventos_json JSONB;\nALTER TABLE bronze.nuxeo_posicao_eventos ADD COLUMN IF NOT EXISTS payload_json JSONB;\nALTER TABLE bronze.nuxeo_posicao_eventos ADD COLUMN IF NOT EXISTS ingested_at TIMESTAMPTZ DEFAULT NOW();\n`);\n\nlet totalRecords = 0;\nconst chunkSize = 500;\n\nfor (let i = 0; i < positions.length; i += chunkSize) {\n  const chunk = positions.slice(i, i + chunkSize);\n  const values = chunk.map(pos => {\n    totalRecords++;\n    const evts = pos.events || [];\n    return '('\n      + valStr(pos.identifier) + ', '\n      + valStr(pos.complement) + ', '\n      + valStr(pos.serial) + ', '\n      + valStr(pos.address) + ', '\n      + valStr(pos.city) + ', '\n      + valStr(pos.state) + ', '\n      + valStr(pos.country) + ', '\n      + valNum(pos.latitude) + ', '\n      + valNum(pos.longitude) + ', '\n      + valStr(pos.dateGps) + ', '\n      + valBool(pos.ignition) + ', '\n      + valBool(pos.block) + ', '\n      + valBool(pos.panic) + ', '\n      + valNum(pos.speed) + ', '\n      + valBool(pos.baterry) + ', '\n      + valStr(pos.antiTheft) + ', '\n      + evts.length + ', '\n      + valJson(evts) + ', '\n      + valJson(pos)\n      + ')';\n  }).join(',\\n');\n\n  sqlStatements.push(`\n    INSERT INTO bronze.nuxeo_posicao_eventos (\n      placa, complemento, serial, endereco, cidade, estado, pais,\n      latitude, longitude, data_gps, ignicao, bloqueio, panico, velocidade, bateria, antifurto,\n      qtd_eventos, eventos_json, payload_json\n    ) VALUES ${values};\n  `);\n}\n\nreturn [{ json: { _sql: sqlStatements.join('\\n'), totalRecords } }];"
+      },
+      "id": "e7a7a707-0001-4000-8000-000000000006",
+      "name": "05 - Build INSERT Batch (Bronze)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2700,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json._sql }}",
+        "options": {}
+      },
+      "id": "e7a7a707-0001-4000-8000-000000000007",
+      "name": "06 - Inserir PostgreSQL DW (Bronze)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -2480,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 1,
+        "unit": "seconds"
+      },
+      "id": "e7a7a707-0001-4000-8000-000000000008",
+      "name": "07 - Pausa (1 seg)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -2260,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "console.log('[BACKFILL LAST POSITION AND EVENT] Todos os meses foram processados!');\nreturn [{ json: { status: 'SUCESSO', mensagem: 'Backfill de Posições e Eventos por Período concluído!' } }];"
+      },
+      "id": "e7a7a707-0001-4000-8000-000000000009",
+      "name": "08 - Backfill Concluído",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3140,
+        320
+      ]
+    }
+  ],
+  "connections": {
+    "Executar Manualmente (Backfill lastPositionAndEvent)": {
+      "main": [
+        [
+          {
+            "node": "01 - Nuxeo Auth",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "01 - Nuxeo Auth": {
+      "main": [
+        [
+          {
+            "node": "02 - Gerar Janelas Mensais",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "02 - Gerar Janelas Mensais": {
+      "main": [
+        [
+          {
+            "node": "03 - Loop por Mês (1 por vez)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "03 - Loop por Mês (1 por vez)": {
+      "main": [
+        [
+          {
+            "node": "04 - GET lastPositionAndEvent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "08 - Backfill Concluído",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "04 - GET lastPositionAndEvent": {
+      "main": [
+        [
+          {
+            "node": "05 - Build INSERT Batch (Bronze)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "05 - Build INSERT Batch (Bronze)": {
+      "main": [
+        [
+          {
+            "node": "06 - Inserir PostgreSQL DW (Bronze)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "06 - Inserir PostgreSQL DW (Bronze)": {
+      "main": [
+        [
+          {
+            "node": "07 - Pausa (1 seg)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "07 - Pausa (1 seg)": {
+      "main": [
+        [
+          {
+            "node": "03 - Loop por Mês (1 por vez)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

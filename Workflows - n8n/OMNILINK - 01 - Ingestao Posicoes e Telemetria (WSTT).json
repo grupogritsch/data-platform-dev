@@ -1,0 +1,174 @@
+{
+  "name": "OMNILINK - 01 - Ingestao Posicoes e Telemetria (WSTT)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "00-trigger",
+      "name": "00 - A cada 1 hora",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://wstt.omnilink.com.br/iasws/iasws.asmx",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "text/xml; charset=utf-8"
+            },
+            {
+              "name": "SOAPAction",
+              "value": "\"http://microsoft.com/webservices/ObtemAllPosicoesAtuais\""
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "text/xml",
+        "body": "<soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:web=\"http://microsoft.com/webservices/\"><soapenv:Header/><soapenv:Body><web:ObtemAllPosicoesAtuais><web:Usuario>gabriel.brittes@gritsch.com.br</web:Usuario><web:Senha>Gab#2026.</web:Senha></web:ObtemAllPosicoesAtuais></soapenv:Body></soapenv:Envelope>",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "fullResponse": false
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "01-request",
+      "name": "01 - Request ObtemAllPosicoesAtuais (SOAP)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        0
+      ],
+      "notes": "Credenciais oficiais Omnilink pré-configuradas (gabriel.brittes@gritsch.com.br)."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse XML de resposta da Omnilink\nlet rawXml = '';\nif (typeof $json === 'string') {\n  rawXml = $json;\n} else if ($json.data) {\n  rawXml = typeof $json.data === 'string' ? $json.data : JSON.stringify($json.data);\n} else if ($json.body) {\n  rawXml = typeof $json.body === 'string' ? $json.body : JSON.stringify($json.body);\n} else {\n  rawXml = JSON.stringify($json);\n}\n\n// Extrair payload dentro de <return>...</return>\nlet xmlText = rawXml;\nconst match = rawXml.match(/<return[^>]*>([\\s\\S]*?)<\\/return>/i);\nif (match && match[1]) {\n  xmlText = match[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');\n}\n\n// Verificar se veio mensagem de erro da Omnilink\nif (xmlText.includes('<msgerro>') || xmlText.includes('Usuário ou Senha')) {\n  const errMatch = (xmlText.match(/<msgerro>([^<]*)<\\/msgerro>/i) || [])[1] || 'Erro de autenticacao/permissao na Omnilink';\n  throw new Error(`Erro Omnilink: ${errMatch}`);\n}\n\n// Capturar tags dos veiculos na Omnilink\nconst items = [];\nconst itemRegex = /<teleevento>([\\s\\S]*?)<\\/teleevento>/gi;\nlet m;\nwhile ((m = itemRegex.exec(xmlText)) !== null) {\n  const block = m[1];\n  const placa = (block.match(/<placa>([^<]*)<\\/placa>/i) || [])[1] || '';\n  const serial = (block.match(/<serial>([^<]*)<\\/serial>/i) || [])[1] || '';\n  const dataGps = (block.match(/<data>([^<]*)<\\/data>/i) || [])[1] || '';\n  const vel = (block.match(/<velocidade>([^<]*)<\\/velocidade>/i) || [])[1] || '0';\n  const ign = (block.match(/<ignicao>([^<]*)<\\/ignicao>/i) || [])[1] || '';\n  const cidade = (block.match(/<cidade>([^<]*)<\\/cidade>/i) || [])[1] || '';\n  const uf = (block.match(/<uf>([^<]*)<\\/uf>/i) || [])[1] || '';\n  const lat = (block.match(/<latitude>([^<]*)<\\/latitude>/i) || [])[1] || '0';\n  const lon = (block.match(/<longitude>([^<]*)<\\/longitude>/i) || [])[1] || '0';\n\n  if (placa) {\n    items.push({\n      placa: placa.toUpperCase().replace(/[^A-Z0-9]/g, ''),\n      complemento: 'OMNILINK - ' + placa.toUpperCase(),\n      serial: serial,\n      cidade: cidade,\n      estado: uf,\n      latitude: parseFloat(lat.replace(',', '.')) || 0,\n      longitude: parseFloat(lon.replace(',', '.')) || 0,\n      data_gps: dataGps,\n      ignicao: ign.toLowerCase().includes('lig')\n    });\n  }\n}\n\nreturn [{\n  json: {\n    records: items,\n    total: items.length\n  }\n}];"
+      },
+      "id": "02-parse",
+      "name": "02 - Parse XML Omnilink",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO bronze.nuxeo_veiculos_posicao \n(placa, complemento, serial, cidade, estado, latitude, longitude, data_gps, ignicao)\nSELECT \n    r->>'placa',\n    r->>'complemento',\n    r->>'serial',\n    r->>'cidade',\n    r->>'estado',\n    (r->>'latitude')::numeric,\n    (r->>'longitude')::numeric,\n    r->>'data_gps',\n    (r->>'ignicao')::boolean\nFROM jsonb_array_elements($1::jsonb) AS r;",
+        "options": {
+          "queryReplacement": "={{ [ JSON.stringify($json.records) ] }}"
+        }
+      },
+      "id": "03-carrega-posicoes",
+      "name": "03 - Carrega Posicoes Omnilink DW",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        660,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO torre.map_veiculo_rastreador (placa, provedor_rastreador, origem_mapeamento, observacao)\nSELECT DISTINCT \n    UPPER(REPLACE(r->>'placa', '-', '')) AS placa,\n    'OMNILINK' AS provedor_rastreador,\n    'API' AS origem_mapeamento,\n    'Validado via API Omnilink WSTT' AS observacao\nFROM jsonb_array_elements($1::jsonb) AS r\nJOIN torre.gold_dim_veiculo v ON UPPER(REPLACE(v.placa, '-', '')) = UPPER(REPLACE(r->>'placa', '-', ''))\nWHERE v.situacao_veiculo NOT IN ('VENDIDO', 'BAIXADO')\nON CONFLICT (placa) DO UPDATE SET\n    provedor_rastreador = 'OMNILINK',\n    origem_mapeamento = 'API',\n    observacao = EXCLUDED.observacao,\n    atualizado_em = NOW();",
+        "options": {
+          "queryReplacement": "={{ [ JSON.stringify($('02 - Parse XML Omnilink').first().json.records) ] }}"
+        }
+      },
+      "id": "04-mapeamento",
+      "name": "04 - Atualiza Mapeamento Omnilink DW",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        880,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "00 - A cada 1 hora": {
+      "main": [
+        [
+          {
+            "node": "01 - Request ObtemAllPosicoesAtuais (SOAP)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "01 - Request ObtemAllPosicoesAtuais (SOAP)": {
+      "main": [
+        [
+          {
+            "node": "02 - Parse XML Omnilink",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "02 - Parse XML Omnilink": {
+      "main": [
+        [
+          {
+            "node": "03 - Carrega Posicoes Omnilink DW",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "03 - Carrega Posicoes Omnilink DW": {
+      "main": [
+        [
+          {
+            "node": "04 - Atualiza Mapeamento Omnilink DW",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

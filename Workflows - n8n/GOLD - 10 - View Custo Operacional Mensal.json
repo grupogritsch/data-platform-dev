@@ -1,0 +1,71 @@
+{
+  "name": "GOLD - 10 - View Custo Operacional Mensal",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-400, 0],
+      "id": "a1b2c3d4-0011-4000-8000-000000000001",
+      "name": "Executar Manualmente"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Consolida combustível + pedágio por filial/mês/grupo_veiculo\n-- Combustível tem grupo_combustivel como dimensão extra → agrega antes do join\nCREATE OR REPLACE VIEW torre.gold_v_custo_operacional_mensal AS\nWITH comb_por_grupo AS (\n  SELECT\n    ano_mes,\n    ano,\n    mes,\n    filial_nome,\n    filial_estado,\n    filial_regiao,\n    grupo_veiculo,\n    SUM(total_valor_liquido)                                    AS total_valor_liquido,\n    SUM(total_litros)                                           AS total_litros,\n    ROUND(\n      SUM(total_valor_liquido)\n      / NULLIF(SUM(total_litros), 0)\n    , 4)                                                        AS preco_medio_ponderado,\n    SUM(qtd_abastecimentos)                                         AS qtd_abastecimentos,\n    SUM(qtd_estornos)                                           AS qtd_estornos,\n    SUM(qtd_veiculos)                                           AS qtd_veiculos_comb\n  FROM torre.gold_mv_kpis_combustivel_mensal\n  GROUP BY ano_mes, ano, mes, filial_nome, filial_estado, filial_regiao, grupo_veiculo\n)\nSELECT\n  COALESCE(c.ano_mes,      p.ano_mes)      AS ano_mes,\n  COALESCE(c.ano,          p.ano)          AS ano,\n  COALESCE(c.mes,          p.mes)          AS mes,\n  COALESCE(c.filial_nome,  p.filial_nome)  AS filial_nome,\n  COALESCE(c.filial_estado,p.filial_estado)AS filial_estado,\n  COALESCE(c.filial_regiao,p.filial_regiao)AS filial_regiao,\n  COALESCE(c.grupo_veiculo,p.grupo_veiculo)AS grupo_veiculo,\n  -- Combustível\n  COALESCE(c.total_valor_liquido, 0)         AS total_valor_liquido,\n  COALESCE(c.total_litros, 0)              AS total_litros,\n  c.preco_medio_ponderado,\n  COALESCE(c.qtd_abastecimentos, 0)        AS qtd_abastecimentos,\n  COALESCE(c.qtd_estornos, 0)              AS qtd_estornos_combustivel,\n  -- Pedágio\n  COALESCE(p.total_valor, 0)               AS custo_pedagio,\n  COALESCE(p.qtd_passagens, 0)             AS qtd_passagens,\n  COALESCE(p.ticket_medio, 0)              AS ticket_medio_pedagio,\n  -- Consolidado\n  COALESCE(c.total_valor_liquido, 0)\n    + COALESCE(p.total_valor, 0)           AS custo_total,\n  ROUND(\n    COALESCE(p.total_valor, 0)\n    / NULLIF(\n        COALESCE(c.total_valor_liquido, 0)\n        + COALESCE(p.total_valor, 0)\n      , 0) * 100\n  , 2)                                     AS pct_pedagio,\n  -- Veículos (maior contagem entre as duas fontes)\n  GREATEST(\n    COALESCE(c.qtd_veiculos_comb, 0),\n    COALESCE(p.qtd_veiculos, 0)\n  )                                        AS qtd_veiculos\nFROM comb_por_grupo c\nFULL OUTER JOIN torre.gold_mv_kpis_pedagio_mensal p\n  ON  c.ano_mes      = p.ano_mes\n  AND c.filial_nome  = p.filial_nome\n  AND c.grupo_veiculo = p.grupo_veiculo;\n\nSELECT 'View gold_v_custo_operacional_mensal criada' AS status;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-160, 0],
+      "id": "a1b2c3d4-0011-4000-8000-000000000010",
+      "name": "Criar View",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- 1. Totais gerais\nSELECT\n  COUNT(DISTINCT ano_mes)                         AS meses,\n  COUNT(*)                                        AS linhas_view,\n  ROUND(SUM(total_valor_liquido)::numeric, 2)       AS total_combustivel,\n  ROUND(SUM(custo_pedagio)::numeric, 2)           AS total_pedagio,\n  ROUND(SUM(custo_total)::numeric, 2)             AS custo_total_geral,\n  ROUND(\n    SUM(custo_pedagio)\n    / NULLIF(SUM(custo_total), 0) * 100\n  ::numeric, 2)                                   AS pct_pedagio_medio\nFROM torre.gold_v_custo_operacional_mensal;\n\n-- 2. Últimos 3 meses por filial (combustível + pedágio + total)\nSELECT\n  ano_mes,\n  filial_nome,\n  ROUND(SUM(total_valor_liquido)::numeric, 2)  AS combustivel,\n  ROUND(SUM(custo_pedagio)::numeric, 2)      AS pedagio,\n  ROUND(SUM(custo_total)::numeric, 2)        AS total,\n  ROUND(AVG(pct_pedagio)::numeric, 2)        AS pct_pedagio,\n  SUM(qtd_veiculos)                          AS veiculos\nFROM torre.gold_v_custo_operacional_mensal\nWHERE ano_mes >= TO_CHAR(CURRENT_DATE - INTERVAL '3 months', 'YYYY-MM')\nGROUP BY ano_mes, filial_nome\nORDER BY ano_mes DESC, total DESC\nLIMIT 20;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [80, 0],
+      "id": "a1b2c3d4-0011-4000-8000-000000000011",
+      "name": "Validar",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Executar Manualmente": {
+      "main": [[{"node": "Criar View", "type": "main", "index": 0}]]
+    },
+    "Criar View": {
+      "main": [[{"node": "Validar", "type": "main", "index": 0}]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "a1b2c3d4-0011-4000-8000-000000000000",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fb581638443806838dcc4ad5d9ab57cd83fc9fe2e7f923a0752e9d8321c3faf5"
+  },
+  "id": "GOLD010viewCustoOperacional",
+  "tags": [
+    {"name": "gold"},
+    {"name": "torre-de-controle"}
+  ]
+}

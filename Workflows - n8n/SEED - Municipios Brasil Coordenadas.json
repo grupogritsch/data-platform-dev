@@ -1,0 +1,126 @@
+{
+  "name": "SEED - Municípios Brasil Coordenadas",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-1120, 0],
+      "id": "seed-mun-0001",
+      "name": "Executar Manualmente"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Tabela de referência geográfica de municípios brasileiros\n-- Fonte: IBGE via kelvins/municipios-brasileiros (GitHub)\n-- Nomes armazenados SEM acento, UPPERCASE\n-- Usada por gold_mv_comparativo_anp para fallback de proximidade (Haversine)\nCREATE TABLE IF NOT EXISTS torre.ref_municipios_brasil (\n  codigo_ibge  CHAR(7)        NOT NULL PRIMARY KEY,\n  municipio    TEXT           NOT NULL,\n  uf           CHAR(2)        NOT NULL,\n  latitude     NUMERIC(10,6)  NOT NULL,\n  longitude    NUMERIC(10,6)  NOT NULL,\n  capital      BOOLEAN        NOT NULL DEFAULT FALSE\n);\n\nCREATE INDEX IF NOT EXISTS idx_ref_mun_uf\n  ON torre.ref_municipios_brasil (uf);\nCREATE INDEX IF NOT EXISTS idx_ref_mun_nome\n  ON torre.ref_municipios_brasil (municipio);\nCREATE INDEX IF NOT EXISTS idx_ref_mun_uf_nome\n  ON torre.ref_municipios_brasil (uf, municipio);\n\nSELECT 'Tabela pronta' AS status;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-880, 0],
+      "id": "seed-mun-0002",
+      "name": "Criar Tabela",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://raw.githubusercontent.com/kelvins/municipios-brasileiros/main/csv/municipios.csv",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-640, 0],
+      "id": "seed-mun-0003",
+      "name": "Buscar CSV"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parseia o CSV de municípios brasileiros e constrói o INSERT SQL\n// Fonte: kelvins/municipios-brasileiros (IBGE)\n// Colunas esperadas: codigo_ibge, nome, latitude, longitude, capital, codigo_uf\nconst raw = $input.first().json.data || $input.first().json.body || '';\nif (!raw) throw new Error('CSV vazio. Verifique a URL ou o formato de resposta do HTTP Request.');\n\nconst csvText = raw.replace(/\\r/g, '');\nconst lines = csvText.trim().split('\\n');\nconst headers = lines[0].split(',').map(h => h.trim().replace(/\"/g, ''));\n\nconst iCodigo  = headers.indexOf('codigo_ibge');\nconst iNome    = headers.indexOf('nome');\nconst iLat     = headers.indexOf('latitude');\nconst iLon     = headers.indexOf('longitude');\nconst iCapital = headers.indexOf('capital');\nconst iUfSigla = headers.indexOf('uf');\nconst iUfCode  = headers.indexOf('codigo_uf');\n\nif (iCodigo < 0 || iNome < 0 || iLat < 0 || iLon < 0) {\n  throw new Error('Colunas nao encontradas. Headers detectados: ' + headers.join(', '));\n}\n\nconst ufMap = {\n  '11':'RO','12':'AC','13':'AM','14':'RR','15':'PA',\n  '16':'AP','17':'TO','21':'MA','22':'PI','23':'CE',\n  '24':'RN','25':'PB','26':'PE','27':'AL','28':'SE',\n  '29':'BA','31':'MG','32':'ES','33':'RJ','35':'SP',\n  '41':'PR','42':'SC','43':'RS','50':'MS','51':'MT',\n  '52':'GO','53':'DF'\n};\n\nfunction parseLine(line) {\n  const result = [];\n  let field = '';\n  let inQuotes = false;\n  for (let i = 0; i < line.length; i++) {\n    const ch = line[i];\n    if (ch === '\"') { inQuotes = !inQuotes; }\n    else if (ch === ',' && !inQuotes) { result.push(field); field = ''; }\n    else { field += ch; }\n  }\n  result.push(field);\n  return result;\n}\n\nfunction stripAccents(str) {\n  return str.normalize('NFD').replace(/[\\u0300-\\u036f]/g, '');\n}\n\nconst values = [];\nconst skipped = [];\nfor (let i = 1; i < lines.length; i++) {\n  const cols = parseLine(lines[i].trim());\n  if (cols.length < 5) continue;\n\n  const codigo  = cols[iCodigo].trim();\n  const nome    = stripAccents(cols[iNome].trim()).toUpperCase().replace(/'/g, \"''\");\n  const lat     = parseFloat(cols[iLat]);\n  const lon     = parseFloat(cols[iLon]);\n  const capital = cols[iCapital] && cols[iCapital].trim() === '1';\n\n  let uf = '';\n  if (iUfSigla >= 0 && cols[iUfSigla] && cols[iUfSigla].trim().length === 2) {\n    uf = cols[iUfSigla].trim().toUpperCase();\n  } else if (iUfCode >= 0) {\n    uf = ufMap[cols[iUfCode].trim()] || '';\n  }\n\n  if (!codigo || !nome || isNaN(lat) || isNaN(lon) || !uf) {\n    skipped.push(lines[i].substring(0, 60));\n    continue;\n  }\n\n  values.push(\"('\" + codigo + \"','\" + nome + \"','\" + uf + \"',\" + lat + \",\" + lon + \",\" + capital + \")\");\n}\n\nif (values.length === 0) {\n  throw new Error('Nenhum municipio parseado. Verifique o formato do CSV. Linhas ignoradas: ' + skipped.slice(0, 3).join(' | '));\n}\n\nconst sql =\n  \"INSERT INTO torre.ref_municipios_brasil (codigo_ibge, municipio, uf, latitude, longitude, capital)\\n\" +\n  \"VALUES\\n\" +\n  values.join(',\\n') +\n  \"\\nON CONFLICT (codigo_ibge) DO UPDATE SET\" +\n  \"\\n  municipio = EXCLUDED.municipio,\" +\n  \"\\n  uf        = EXCLUDED.uf,\" +\n  \"\\n  latitude  = EXCLUDED.latitude,\" +\n  \"\\n  longitude = EXCLUDED.longitude,\" +\n  \"\\n  capital   = EXCLUDED.capital;\";\n\nreturn [{ json: { query: sql, total_municipios: values.length, linhas_ignoradas: skipped.length } }];",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-400, 0],
+      "id": "seed-mun-0004",
+      "name": "Processar CSV"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.query }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-160, 0],
+      "id": "seed-mun-0005",
+      "name": "Inserir Municípios",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  COUNT(*)                              AS total_municipios,\n  COUNT(DISTINCT uf)                    AS total_ufs,\n  COUNT(*) FILTER (WHERE capital)       AS capitais,\n  ROUND(MIN(latitude)::numeric, 4)      AS lat_sul,\n  ROUND(MAX(latitude)::numeric, 4)      AS lat_norte,\n  ROUND(MIN(longitude)::numeric, 4)     AS lon_oeste,\n  ROUND(MAX(longitude)::numeric, 4)     AS lon_leste\nFROM torre.ref_municipios_brasil;\n\nSELECT\n  uf,\n  COUNT(*)                              AS municipios,\n  COUNT(*) FILTER (WHERE capital)       AS capital\nFROM torre.ref_municipios_brasil\nGROUP BY uf\nORDER BY uf;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [80, 0],
+      "id": "seed-mun-0006",
+      "name": "Validar",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Executar Manualmente": {
+      "main": [[{"node": "Criar Tabela", "type": "main", "index": 0}]]
+    },
+    "Criar Tabela": {
+      "main": [[{"node": "Buscar CSV", "type": "main", "index": 0}]]
+    },
+    "Buscar CSV": {
+      "main": [[{"node": "Processar CSV", "type": "main", "index": 0}]]
+    },
+    "Processar CSV": {
+      "main": [[{"node": "Inserir Municípios", "type": "main", "index": 0}]]
+    },
+    "Inserir Municípios": {
+      "main": [[{"node": "Validar", "type": "main", "index": 0}]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "seed-mun-0000-0000-0000-000000000000",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fb581638443806838dcc4ad5d9ab57cd83fc9fe2e7f923a0752e9d8321c3faf5"
+  },
+  "id": "SEEDmunicipiosBrasilCoordenadas",
+  "tags": [
+    {"name": "seed"},
+    {"name": "torre-de-controle"}
+  ]
+}

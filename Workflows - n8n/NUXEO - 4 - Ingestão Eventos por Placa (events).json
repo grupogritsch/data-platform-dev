@@ -1,0 +1,229 @@
+{
+  "name": "NUXEO - 4 - Ingestão Eventos por Placa (events)",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "e4a4a404-0001-4000-8000-000000000001",
+      "name": "Agendamento (Hora em Hora)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -3800,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.nuxeo.com.br/rest/user/login/",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"client\": \"Gritsch\",\n  \"login\": \"Gritsch\",\n  \"psw\": \"gr1tsch\"\n}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "e4a4a404-0001-4000-8000-000000000002",
+      "name": "01 - Nuxeo Auth",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -3580,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.nuxeo.com.br/rest/report/targetAndPosition/?position=true",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Auth-Token",
+              "value": "={{ $json.token }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "id": "e4a4a404-0001-4000-8000-000000000003",
+      "name": "02 - Buscar Frota Direto da Nuxeo API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -3360,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst token = $('01 - Nuxeo Auth').first().json.token;\nconst lista = response.positions || response.targets || response || [];\n\nif (!Array.isArray(lista) || lista.length === 0) {\n  throw new Error('Nuxeo API não retornou nenhum veículo cadastrado.');\n}\n\nconst now = new Date();\nconst past = new Date(now.getTime() - (24 * 60 * 60 * 1000)); // Últimas 24h\nconst pad = (n) => String(n).padStart(2, '0');\nconst fmtDate = (d) => `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;\n\nconst begin = fmtDate(past);\nconst end = fmtDate(now);\n\nconst placasVistas = new Set();\nconst items = [];\n\nfor (const v of lista) {\n  const placa = (v.identifier || '').trim().toUpperCase();\n  if (!placa || placasVistas.has(placa)) continue;\n  placasVistas.add(placa);\n  items.push({\n    json: {\n      token,\n      placa,\n      begin,\n      end,\n      url: `https://api.nuxeo.com.br/rest/report/events/?begin=${encodeURIComponent(begin)}&end=${encodeURIComponent(end)}&plate=${placa}`\n    }\n  });\n}\n\nreturn items;"
+      },
+      "id": "e4a4a404-0001-4000-8000-000000000004",
+      "name": "03 - Gerar URLs por Placa Nuxeo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3140,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Auth-Token",
+              "value": "={{ $json.token }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "e4a4a404-0001-4000-8000-000000000005",
+      "name": "04 - HTTP Request events",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2920,
+        100
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const rawItems = $input.all();\n\nconst esc = (v) => v != null ? String(v).replace(/'/g, \"''\") : null;\nconst valStr = (v) => v != null ? `'${esc(v)}'` : 'NULL';\nconst valNum = (v) => (v != null && !isNaN(v)) ? Number(v) : 'NULL';\nconst valJson = (obj) => `'${JSON.stringify(obj).replace(/'/g, \"''\")}'::jsonb`;\n\nconst sqlStatements = [];\nsqlStatements.push(`\nCREATE SCHEMA IF NOT EXISTS bronze;\nCREATE TABLE IF NOT EXISTS bronze.nuxeo_eventos (\n    id BIGSERIAL PRIMARY KEY,\n    placa VARCHAR(20),\n    complemento TEXT,\n    nome_evento TEXT,\n    data_evento TEXT,\n    velocidade NUMERIC(6,2),\n    latitude NUMERIC(10,6),\n    longitude NUMERIC(10,6),\n    endereco TEXT,\n    cidade VARCHAR(150),\n    estado VARCHAR(50),\n    pais VARCHAR(50),\n    payload_json JSONB,\n    ingested_at TIMESTAMPTZ DEFAULT NOW()\n);\n`);\n\nlet totalRecords = 0;\nfor (const item of rawItems) {\n  const resp = item.json;\n  const events = resp.events || [];\n  if (!Array.isArray(events) || events.length === 0) continue;\n\n  const values = events.map(evt => {\n    totalRecords++;\n    return '('\n      + valStr(evt.identifier || resp.placa) + ', '\n      + valStr(evt.complement) + ', '\n      + valStr(evt.event) + ', '\n      + valStr(evt.date) + ', '\n      + valNum(evt.speed) + ', '\n      + valNum(evt.latitude) + ', '\n      + valNum(evt.longitude) + ', '\n      + valStr(evt.address) + ', '\n      + valStr(evt.city) + ', '\n      + valStr(evt.state) + ', '\n      + valStr(evt.country) + ', '\n      + valJson(evt)\n      + ')';\n  }).join(',\\n');\n\n  sqlStatements.push(`\n    INSERT INTO bronze.nuxeo_eventos (\n      placa, complemento, nome_evento, data_evento, velocidade, latitude, longitude, endereco, cidade, estado, pais, payload_json\n    ) VALUES ${values};\n  `);\n}\n\nif (totalRecords === 0) {\n  return [{ json: { _sql: \"SELECT 0 AS inseridos;\", totalRecords: 0 } }];\n}\n\nreturn [{ json: { _sql: sqlStatements.join('\\n'), totalRecords } }];"
+      },
+      "id": "e4a4a404-0001-4000-8000-000000000006",
+      "name": "05 - Build INSERT Batch (Bronze)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2700,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json._sql }}",
+        "options": {}
+      },
+      "id": "e4a4a404-0001-4000-8000-000000000007",
+      "name": "06 - Inserir PostgreSQL DW (Bronze)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -2480,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Agendamento (Hora em Hora)": {
+      "main": [
+        [
+          {
+            "node": "01 - Nuxeo Auth",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "01 - Nuxeo Auth": {
+      "main": [
+        [
+          {
+            "node": "02 - Buscar Frota Direto da Nuxeo API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "02 - Buscar Frota Direto da Nuxeo API": {
+      "main": [
+        [
+          {
+            "node": "03 - Gerar URLs por Placa Nuxeo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "03 - Gerar URLs por Placa Nuxeo": {
+      "main": [
+        [
+          {
+            "node": "04 - HTTP Request events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "04 - HTTP Request events": {
+      "main": [
+        [
+          {
+            "node": "05 - Build INSERT Batch (Bronze)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "05 - Build INSERT Batch (Bronze)": {
+      "main": [
+        [
+          {
+            "node": "06 - Inserir PostgreSQL DW (Bronze)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

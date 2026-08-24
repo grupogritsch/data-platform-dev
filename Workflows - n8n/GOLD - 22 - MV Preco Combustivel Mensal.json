@@ -1,0 +1,131 @@
+{
+  "name": "GOLD - 22 - MV Preco Combustivel Mensal",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -640,
+        0
+      ],
+      "id": "a1b2c3d4-0022-4000-8000-000000000001",
+      "name": "Executar Manualmente"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 5 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -640,
+        200
+      ],
+      "id": "a1b2c3d4-0022-4000-8000-000000000002",
+      "name": "Refresh Diário"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Recria a MV com a definição mais recente\nDROP MATERIALIZED VIEW IF EXISTS torre.gold_mv_preco_combustivel_mensal CASCADE;\n\nCREATE MATERIALIZED VIEW torre.gold_mv_preco_combustivel_mensal AS\nWITH frota AS (\n  -- KPIs de combustível da frota por estado/tipo/mês\n  SELECT\n    ano_mes,\n    ano,\n    mes,\n    filial_estado,\n    grupo_combustivel,\n    SUM(qtd_abastecimentos)                                              AS qtd_abastecimentos,\n    SUM(qtd_veiculos)                                         AS qtd_veiculos,\n    ROUND(SUM(total_litros)::numeric, 2)                                 AS total_litros,\n    ROUND(SUM(total_valor_liquido)::numeric, 2)                          AS total_valor_liquido,\n    -- Preço médio ponderado pela litragem real\n    ROUND(\n      SUM(total_valor_liquido) / NULLIF(SUM(total_litros), 0)::numeric, 4\n    )                                                                    AS preco_medio_ponderado\n  FROM torre.gold_mv_kpis_combustivel_mensal\n  WHERE filial_estado IS NOT NULL\n    AND grupo_combustivel NOT IN ('Arla', 'Outros')\n  GROUP BY 1, 2, 3, 4, 5\n),\nanp AS (\n  -- Referência de preço ANP por estado/tipo/mês\n  -- estado_sigla no ANP é nome completo (ex: 'PARANA'), frota usa sigla ('PR')\n  SELECT\n    TO_CHAR(DATE_TRUNC('month', data_coleta), 'YYYY-MM') AS ano_mes,\n    CASE estado_sigla\n      WHEN 'ACRE'                THEN 'AC'\n      WHEN 'ALAGOAS'             THEN 'AL'\n      WHEN 'AMAPA'               THEN 'AP'\n      WHEN 'AMAZONAS'            THEN 'AM'\n      WHEN 'BAHIA'               THEN 'BA'\n      WHEN 'CEARA'               THEN 'CE'\n      WHEN 'DISTRITO FEDERAL'    THEN 'DF'\n      WHEN 'ESPIRITO SANTO'      THEN 'ES'\n      WHEN 'GOIAS'               THEN 'GO'\n      WHEN 'MARANHAO'            THEN 'MA'\n      WHEN 'MATO GROSSO'         THEN 'MT'\n      WHEN 'MATO GROSSO DO SUL'  THEN 'MS'\n      WHEN 'MINAS GERAIS'        THEN 'MG'\n      WHEN 'PARA'                THEN 'PA'\n      WHEN 'PARAIBA'             THEN 'PB'\n      WHEN 'PARANA'              THEN 'PR'\n      WHEN 'PERNAMBUCO'          THEN 'PE'\n      WHEN 'PIAUI'               THEN 'PI'\n      WHEN 'RIO DE JANEIRO'      THEN 'RJ'\n      WHEN 'RIO GRANDE DO NORTE' THEN 'RN'\n      WHEN 'RIO GRANDE DO SUL'   THEN 'RS'\n      WHEN 'RONDONIA'            THEN 'RO'\n      WHEN 'RORAIMA'             THEN 'RR'\n      WHEN 'SANTA CATARINA'      THEN 'SC'\n      WHEN 'SAO PAULO'           THEN 'SP'\n      WHEN 'SERGIPE'             THEN 'SE'\n      WHEN 'TOCANTINS'           THEN 'TO'\n    END                                                   AS filial_estado,\n    CASE\n      WHEN produto ILIKE 'DIESEL%'    THEN 'Diesel'\n      WHEN produto ILIKE 'GASOLINA%'  THEN 'Gasolina'\n      WHEN produto ILIKE 'ETANOL%'    THEN 'Álcool'\n      WHEN produto ILIKE 'GNV%'       THEN 'GNV'\n    END                                                   AS grupo_combustivel,\n    ROUND(AVG(preco_revenda)::numeric, 4)                 AS preco_anp_ref\n  FROM torre.raw_anp_combustiveis\n  WHERE data_coleta IS NOT NULL\n    AND preco_revenda IS NOT NULL\n    AND preco_revenda > 0\n    AND produto NOT IN ('GLP')\n    AND bandeira IS NOT NULL\n    AND TRIM(bandeira) <> ''\n    -- So posto bandeirado (24/08/2026): a frota abastece em bandeirado,\n    -- entao posto branco nao entra na referencia. LIKE em vez de igualdade\n    -- porque a ANP escreve 'BRANCA'/'BANDEIRA BRANCA' com variacoes.\n    AND UPPER(TRIM(bandeira)) NOT LIKE '%BRANCA%'\n    AND UPPER(TRIM(bandeira)) NOT LIKE '%SEM BANDEIRA%'\n    AND UPPER(TRIM(bandeira)) NOT IN ('OUTRAS', 'OUTROS', 'NAO INFORMADA', 'NÃO INFORMADA', 'N/D', 'ND', '-')\n  GROUP BY 1, 2, 3\n  HAVING CASE\n    WHEN produto ILIKE 'DIESEL%'    THEN 'Diesel'\n    WHEN produto ILIKE 'GASOLINA%'  THEN 'Gasolina'\n    WHEN produto ILIKE 'ETANOL%'    THEN 'Álcool'\n    WHEN produto ILIKE 'GNV%'       THEN 'GNV'\n  END IS NOT NULL\n),\ncom_lag AS (\n  -- Variação MoM do preço da frota\n  SELECT\n    f.*,\n    LAG(f.preco_medio_ponderado) OVER (\n      PARTITION BY f.filial_estado, f.grupo_combustivel\n      ORDER BY f.ano_mes\n    ) AS preco_mes_anterior\n  FROM frota f\n)\nSELECT\n  c.ano_mes,\n  c.ano,\n  c.mes,\n  c.filial_estado,\n  c.grupo_combustivel,\n  c.qtd_abastecimentos,\n  c.qtd_veiculos,\n  c.total_litros,\n  c.total_valor_liquido,\n  c.preco_medio_ponderado,\n  -- Referência ANP\n  a.preco_anp_ref,\n  -- Desvio frota vs ANP\n  ROUND((c.preco_medio_ponderado - a.preco_anp_ref)::numeric, 4)          AS desvio_abs,\n  ROUND(\n    CASE WHEN a.preco_anp_ref > 0\n    THEN (c.preco_medio_ponderado - a.preco_anp_ref) / a.preco_anp_ref * 100\n    END::numeric, 2\n  )                                                                         AS desvio_pct,\n  -- Custo extra total pago acima do preço ANP\n  ROUND(\n    CASE WHEN a.preco_anp_ref > 0\n    THEN (c.preco_medio_ponderado - a.preco_anp_ref) * c.total_litros\n    END::numeric, 2\n  )                                                                         AS custo_extra_vs_anp,\n  -- Evolução MoM do preço da frota\n  ROUND(c.preco_mes_anterior::numeric, 4)                                  AS preco_mes_anterior,\n  ROUND(\n    CASE WHEN c.preco_mes_anterior > 0\n    THEN (c.preco_medio_ponderado - c.preco_mes_anterior) / c.preco_mes_anterior * 100\n    END::numeric, 2\n  )                                                                         AS variacao_pct_preco\nFROM com_lag c\nLEFT JOIN anp a\n  ON c.ano_mes = a.ano_mes\n  AND c.filial_estado = a.filial_estado\n  AND c.grupo_combustivel = a.grupo_combustivel\nWITH DATA;\n\nCREATE INDEX idx_mv_preco_comb_mensal_ano_mes\n  ON torre.gold_mv_preco_combustivel_mensal (ano_mes);\nCREATE INDEX idx_mv_preco_comb_mensal_estado\n  ON torre.gold_mv_preco_combustivel_mensal (filial_estado);\nCREATE INDEX idx_mv_preco_comb_mensal_grupo\n  ON torre.gold_mv_preco_combustivel_mensal (grupo_combustivel);\nCREATE INDEX idx_mv_preco_comb_mensal_desvio\n  ON torre.gold_mv_preco_combustivel_mensal (desvio_pct);\n\nSELECT 'MV gold_mv_preco_combustivel_mensal criada' AS status;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -400,
+        100
+      ],
+      "id": "a1b2c3d4-0022-4000-8000-000000000010",
+      "name": "Criar MV",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  COUNT(*)                                                         AS linhas,\n  COUNT(DISTINCT ano_mes)                                          AS meses,\n  MIN(ano_mes)                                                     AS primeiro_mes,\n  MAX(ano_mes)                                                     AS ultimo_mes,\n  COUNT(DISTINCT filial_estado)                                    AS estados,\n  COUNT(*) FILTER (WHERE preco_anp_ref IS NOT NULL)                AS com_referencia_anp,\n  COUNT(*) FILTER (WHERE preco_anp_ref IS NULL)                    AS sem_referencia_anp,\n  COUNT(*) FILTER (WHERE desvio_pct > 5)                           AS acima_5pct_anp,\n  COUNT(*) FILTER (WHERE desvio_pct < -5)                          AS abaixo_5pct_anp,\n  ROUND(AVG(desvio_pct) FILTER\n    (WHERE desvio_pct IS NOT NULL)::numeric, 2)                    AS desvio_medio_pct\nFROM torre.gold_mv_preco_combustivel_mensal\nWHERE grupo_combustivel = 'Diesel'\n  AND ano_mes >= TO_CHAR(CURRENT_DATE - INTERVAL '3 months', 'YYYY-MM');\n\n-- Amostra: últimos 3 meses por estado para Diesel\nSELECT\n  ano_mes,\n  filial_estado,\n  grupo_combustivel,\n  preco_medio_ponderado,\n  preco_anp_ref,\n  desvio_pct,\n  ROUND(custo_extra_vs_anp::numeric, 2) AS custo_extra_vs_anp\nFROM torre.gold_mv_preco_combustivel_mensal\nWHERE grupo_combustivel = 'Diesel'\n  AND ano_mes >= TO_CHAR(CURRENT_DATE - INTERVAL '3 months', 'YYYY-MM')\nORDER BY ano_mes DESC, filial_estado\nLIMIT 10;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -160,
+        100
+      ],
+      "id": "a1b2c3d4-0022-4000-8000-000000000011",
+      "name": "Validar",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Executar Manualmente": {
+      "main": [
+        [
+          {
+            "node": "Criar MV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refresh Diário": {
+      "main": [
+        [
+          {
+            "node": "Criar MV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Criar MV": {
+      "main": [
+        [
+          {
+            "node": "Validar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "a1b2c3d4-0022-4000-8000-000000000000",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fb581638443806838dcc4ad5d9ab57cd83fc9fe2e7f923a0752e9d8321c3faf5"
+  },
+  "id": "GOLD022mvPrecoCombustivelMensal",
+  "tags": [
+    {
+      "name": "gold"
+    },
+    {
+      "name": "torre-de-controle"
+    }
+  ]
+}

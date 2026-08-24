@@ -1,12 +1,10 @@
 .env
-
-# Os workflows "3S - 1x" tem as credenciais REAIS da 3S embutidas no corpo do
-# node de Login (injetadas a partir do .env pelo gerador). Sao arquivos
-# secretos — nao versionar.
-# Para voltar a versionar: troque usuario/senha pelos placeholders
-# __USUARIO__/__SENHA__ antes de remover esta linha.
-Workflows - n8n/
+.env.*.local
+*.Zone.Identifier
+.DS_Store
+Thumbs.db
 
 # Credenciais em texto plano — nunca versionar.
 CREDENCIAIS_LOCAIS.md
 .claude/settings.local.json
+

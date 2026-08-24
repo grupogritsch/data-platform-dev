@@ -1,0 +1,66 @@
+{
+  "name": "SILVER - 20 - Atualiza Eventos",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "8,23,38,53 * * * *"
+            }
+          ]
+        }
+      },
+      "id": "1c4c3ac2-1f9d-4ffa-b5ce-7029d009a4db",
+      "name": "00 - A cada 15 min (:08)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT silver.fn_carrega_eventos_nuxeo(CURRENT_DATE - 2, CURRENT_DATE) AS eventos_nuxeo, silver.fn_carrega_eventos_api(CURRENT_DATE - 2, CURRENT_DATE) AS eventos_3s_api, silver.fn_deriva_eventos_velocidade_nuxeo(CURRENT_DATE - 2, CURRENT_DATE) AS velocidade_nuxeo;",
+        "options": {}
+      },
+      "id": "5f3beb54-16f0-4adf-a8e1-b8a36595eab4",
+      "name": "01 - Atualiza Eventos (Nuxeo + 3S API)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        220,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    }
+  ],
+  "connections": {
+    "00 - A cada 15 min (:08)": {
+      "main": [
+        [
+          {
+            "node": "01 - Atualiza Eventos (Nuxeo + 3S API)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

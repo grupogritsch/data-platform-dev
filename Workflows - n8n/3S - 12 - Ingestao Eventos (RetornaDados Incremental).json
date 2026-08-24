@@ -1,0 +1,415 @@
+{
+  "name": "3S - 12 - Ingestao Eventos (RetornaDados Incremental)",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "2,17,32,47 * * * *"
+            }
+          ]
+        }
+      },
+      "id": "7935c125-7d21-470e-9025-2a3e6d4ee7e2",
+      "name": "00 - A cada 15 min (:02)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT ultimo_id FROM bronze.tres_s_watermark WHERE dominio = 'ocorrencia_alerta';",
+        "options": {}
+      },
+      "id": "960304fb-084b-4389-8ffa-56b24bcbd054",
+      "name": "01 - Le Watermark",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        220,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://3stecnologia.eti.br/dataexportapi/ValidaLogin",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept-Encoding",
+              "value": "identity"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "{\"usuario\": \"referencia.locadora919\", \"senha\": \"d01m04\"}"
+      },
+      "id": "00558d79-f51a-4a6c-9bb5-6e7ed95d0575",
+      "name": "Aquece Sessao 3S",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        -140
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput",
+      "notes": "Credenciais reais ja preenchidas a partir do .env do data-platform-dev. Este arquivo contem SENHA — 'Workflows - n8n/' esta no .gitignore por isso."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://3stecnologia.eti.br/dataexportapi/ValidaLogin",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept-Encoding",
+              "value": "identity"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "{\"usuario\": \"referencia.locadora919\", \"senha\": \"d01m04\"}"
+      },
+      "id": "26e12e4e-ec9a-47f5-8f44-fe88349e50bf",
+      "name": "02 - Login",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notes": "Credenciais reais ja preenchidas a partir do .env do data-platform-dev. Este arquivo contem SENHA — 'Workflows - n8n/' esta no .gitignore por isso."
+    },
+    {
+      "parameters": {
+        "jsCode": "const t = $json.token;\n\n// Defeito REAL da API da 3S (medido 21/08/2026): apos periodo ocioso o\n// ValidaLogin as vezes devolve HTTP 200 com token de SESSAO VELHO ja vencido —\n// hex de 32 chars em vez de JWT. Foi o que derrubou as execucoes agendadas de\n// 20 e 21/08 com \"Authorization failed\" no node seguinte. Aqui vira erro\n// claro, no lugar certo.\nif (!t || typeof t !== 'string') {\n  throw new Error('[3S] Login nao devolveu token. Corpo: ' + JSON.stringify($json).slice(0, 200));\n}\nif (!t.startsWith('eyJ')) {\n  throw new Error('[3S] Login devolveu token invalido (esperado JWT, veio ' + t.length +\n    ' chars: \"' + t.slice(0, 16) + '...\"). Defeito de cache da 3S — o login de ' +\n    'aquecimento nao resolveu desta vez. Reexecutar costuma bastar.');\n}\n\n// VALIDADE: le o claim \"exp\" de DENTRO do JWT (epoch em segundos, UTC, sem\n// ambiguidade de fuso).\n//\n// NAO usar o campo \"expiration\" do corpo da resposta: ele vem em horario LOCAL\n// (BRT) e SEM sufixo de fuso, e o new Date() do Node interpreta string ISO sem\n// fuso como hora do SERVIDOR. Com o n8n em UTC, um token valido ate 11:03 BRT\n// (= 14:03 UTC) era lido como vencido as 11:03 UTC — falso positivo de 3h que\n// derrubou o 3S-10 em 21/08/2026. Confirmado antes: o claim exp do JWT marcava\n// 14:38 UTC enquanto o corpo dizia 11:38.\n//\n// Se por algum motivo nao der para decodificar, segue SEM checar validade: o\n// risco de barrar token bom e pior que o de deixar passar um vencido, porque\n// vencido falha logo adiante com erro claro da propria API.\nlet expSeg = null;\ntry {\n  const payload = JSON.parse(Buffer.from(t.split('.')[1], 'base64').toString('utf8'));\n  if (payload && payload.exp) expSeg = Number(payload.exp);\n} catch (e) { /* segue sem checar */ }\n\nif (expSeg && expSeg * 1000 <= Date.now()) {\n  throw new Error('[3S] Login devolveu JWT ja vencido (exp=' +\n    new Date(expSeg * 1000).toISOString() + ', agora=' + new Date().toISOString() +\n    '). Defeito de cache da 3S.');\n}\n\nreturn [{ json: { token: t, expiration: $json.expiration } }];"
+      },
+      "id": "070a55a6-a323-4ec3-8413-6ec5823bbdaf",
+      "name": "Valida Token",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://3stecnologia.eti.br/dataexportapi/RetornaDados",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Valida Token').first().json.token }}"
+            },
+            {
+              "name": "Accept-Encoding",
+              "value": "identity"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({idVeiculo: 0,idPosicao: -1, idSensor: -1, idMensagem: -1, idTelemetria: -1,idAlertaVelocidade: ($('01 - Le Watermark').item.json.ultimo_id ?? 0),idAlertaSensor: ($('01 - Le Watermark').item.json.ultimo_id ?? 0),idAlertaTemperatura: -1,idCercaAlvo: ($('01 - Le Watermark').item.json.ultimo_id ?? 0),idCercaCheckPoint: -1,idCercaLogradouro: ($('01 - Le Watermark').item.json.ultimo_id ?? 0),idCercaPoligonal: ($('01 - Le Watermark').item.json.ultimo_id ?? 0),idCercaRota: -1}) }}"
+      },
+      "id": "b23a99e9-9422-4cc2-ac6e-6aa895acfdd1",
+      "name": "03 - Request RetornaDados",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO bronze.tres_s_raw_response\n  (metodo, params, http_status, sucesso, tamanho_bytes, response_corpo)\nVALUES ('RetornaDados', $2::jsonb, 200, length($1) > 0, length($1), $1)\nRETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [ $('03 - Request RetornaDados').item.json.data, JSON.stringify({ idAlertaVelocidade: ($('01 - Le Watermark').item.json.ultimo_id ?? 0) }) ] }}"
+        }
+      },
+      "id": "2c0c3686-4174-4822-a6e0-f0d9c31d07fa",
+      "name": "04 - Grava Raw Response",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        880,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "notes": "NAO TESTADO nesta versao exata: 'Query Parameters' (campo options.queryReplacement) deve ser uma expressao que retorna um ARRAY, ex. {{ [ valor1, valor2 ] }} — mapeia para $1, $2... na query. Confirmado na documentacao oficial do n8n. Se o import reclamar deste campo, avise imediatamente."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, response_corpo FROM bronze.tres_s_raw_response WHERE id = $1;",
+        "options": {
+          "queryReplacement": "={{ [ $json.id ] }}"
+        }
+      },
+      "id": "6589a326-7596-4e35-aaa9-ba5aba8ec4da",
+      "name": "05 - Le Raw Response",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1100,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "jsCode": "const { response_corpo, id } = $json;\nif (!response_corpo || String(response_corpo).trim() === '') {\n  throw new Error('[3S] Resposta VAZIA (HTTP 200 com corpo vazio). Causa mais provavel: ' +\n    'token invalido ou ausente no header Authorization — a 3S devolve 200 + corpo vazio ' +\n    'nesse caso, em vez de 401. Confira o node de Login e a expressao do header.');\n}\nconst parsed = JSON.parse(response_corpo);\n\n// Equivalente do GUARD_SEM_CONTEUDO para este endpoint: RetornaDados sempre\n// devolve o envelope { Dados: {...} }. Ausencia do envelope = resposta\n// degenerada (token quebrado), nao \"nenhum evento novo\" — este ultimo caso\n// vem como envelope presente com as listas vazias, e e tratado normalmente.\nif (!parsed || (!parsed.Dados && !parsed.dados)) {\n  throw new Error('[3S] RetornaDados sem o envelope Dados na resposta. Sintoma classico ' +\n    'de token quebrado no header Authorization. Corpo recebido: ' +\n    String(response_corpo).slice(0, 200));\n}\n\nconst dados = parsed.Dados || parsed.dados || {};\n\n// Mapa chave do JSON -> tipo canonico (silver.ref_tipo_evento espelha isto)\nconst TIPOS = [\n  ['AlertaVelocidade',  'ALERTA_VELOCIDADE'],\n  ['AlertaSensor',      'ALERTA_SENSOR'],\n  ['AlertaTemperatura', 'ALERTA_TEMPERATURA'],\n  ['CercaAlvo',         'CERCA_ALVO'],\n  ['CercaLogradouro',   'CERCA_LOGRADOURO'],\n  ['CercaPoligonal',    'CERCA_POLIGONAL'],\n  ['CercaRota',         'CERCA_ROTA'],\n];\n\n// BOOTSTRAP: quando o cursor enviado e 0 (primeira execucao, watermark zerado),\n// a 3S NAO devolve eventos — devolve UM registro por dominio contendo so o id\n// da ultima ocorrencia daquele dominio. E assim que se descobre o ponto de\n// partida. Confirmado real em 04/08/2026, resposta com cursores em 0:\n//   AlertaVelocidade: [{ idAlertaVelocidade: 156397661 }]\n//   CercaLogradouro:  [{ idCercaLogradouro:  156397621 }]  ...\n// Sem tratar isso o watermark ficaria preso em 0 para sempre e o fluxo nunca\n// coletaria nada.\nconst CAMPOS_BOOTSTRAP = ['idAlertaVelocidade', 'idAlertaSensor', 'idAlertaTemperatura',\n                          'idCercaAlvo', 'idCercaLogradouro', 'idCercaPoligonal', 'idCercaRota'];\n\nlet maxId = 0;\nconst itens = [];\nconst idsBootstrap = [];\n\nfor (const [chave, tipo] of TIPOS) {\n  const records = dados[chave] || [];\n  if (records.length === 0) continue;\n\n  // Evento de verdade sempre traz idOcorrenciaAlerta; registro de bootstrap nao.\n  const reais = records.filter(r => r && r.idOcorrenciaAlerta != null);\n\n  if (reais.length === 0) {\n    for (const r of records) {\n      for (const campo of CAMPOS_BOOTSTRAP) {\n        const v = parseInt(r && r[campo], 10);\n        if (!isNaN(v) && v > 0) idsBootstrap.push(v);\n      }\n    }\n    continue;\n  }\n\n  for (const rec of reais) {\n    const idOc = parseInt(rec.idOcorrenciaAlerta, 10);\n    if (!isNaN(idOc) && idOc > maxId) maxId = idOc;\n  }\n  itens.push({ json: { records: reais, tipo, rawId: id, maxId: 0 } }); // maxId preenchido abaixo\n}\n\nif (itens.length > 0) {\n  // so agora maxId final e conhecido — preenche em todos os itens\n  // (fn_avanca_watermark e monotonico/idempotente, repetir nao tem efeito)\n  itens.forEach(it => it.json.maxId = maxId);\n  return itens;\n}\n\nif (idsBootstrap.length > 0) {\n  // MENOR id, nao o maior: reprocessar evento e idempotente (ON CONFLICT DO\n  // NOTHING pela chave natural), mas perder evento nao tem volta.\n  const cursorInicial = Math.min.apply(null, idsBootstrap);\n  return [{ json: { records: [], tipo: 'BOOTSTRAP', rawId: id, maxId: cursorInicial, bootstrap: true } }];\n}\n\n// tipo como STRING (nao null): o parametro vai para options.queryReplacement\n// do node Postgres seguinte, e um null dentro do array de parametros e um\n// caminho que nao vale a pena exercitar. Com records vazio nada e inserido\n// de qualquer forma, entao o valor aqui e so um rotulo.\nreturn [{ json: { records: [], tipo: 'NENHUM', rawId: id, maxId: 0, vazio: true } }];"
+      },
+      "id": "8380e5e4-ddbc-45c3-a298-2664d12fceaf",
+      "name": "06 - Split por Tipo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT bronze.fn_carrega_eventos($1::jsonb, $2::text, $3::bigint);",
+        "options": {
+          "queryReplacement": "={{ [ JSON.stringify($json.records), $json.tipo, $json.rawId ] }}"
+        }
+      },
+      "id": "1b9203a6-5440-4b67-a023-cd2a6fd7640b",
+      "name": "07 - Carrega Eventos",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1540,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT bronze.fn_avanca_watermark('ocorrencia_alerta', $1::bigint, $2::bigint);",
+        "options": {
+          "queryReplacement": "={{ [ $('06 - Split por Tipo').first().json.maxId, $('06 - Split por Tipo').first().json.rawId ] }}"
+        }
+      },
+      "id": "e8f21c82-8be3-408b-a022-115254e463c5",
+      "name": "08 - Avanca Watermark",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1760,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "notes": "Roda uma vez por item de '06 - Split por Tipo' (um por tipo de evento com registro). fn_avanca_watermark e monotonico/idempotente, entao repetir com o mesmo maxId nas chamadas seguintes nao tem efeito."
+    }
+  ],
+  "connections": {
+    "00 - A cada 15 min (:02)": {
+      "main": [
+        [
+          {
+            "node": "01 - Le Watermark",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "01 - Le Watermark": {
+      "main": [
+        [
+          {
+            "node": "Aquece Sessao 3S",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aquece Sessao 3S": {
+      "main": [
+        [
+          {
+            "node": "02 - Login",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "02 - Login": {
+      "main": [
+        [
+          {
+            "node": "Valida Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valida Token": {
+      "main": [
+        [
+          {
+            "node": "03 - Request RetornaDados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "03 - Request RetornaDados": {
+      "main": [
+        [
+          {
+            "node": "04 - Grava Raw Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "04 - Grava Raw Response": {
+      "main": [
+        [
+          {
+            "node": "05 - Le Raw Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "05 - Le Raw Response": {
+      "main": [
+        [
+          {
+            "node": "06 - Split por Tipo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "06 - Split por Tipo": {
+      "main": [
+        [
+          {
+            "node": "07 - Carrega Eventos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "07 - Carrega Eventos": {
+      "main": [
+        [
+          {
+            "node": "08 - Avanca Watermark",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

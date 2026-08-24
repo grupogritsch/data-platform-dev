@@ -1,0 +1,162 @@
+{
+  "name": "NUXEO - 1 - Ingestão Cadastro e Última Posição (targetAndPosition)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "id": "e1a1a101-0001-4000-8000-000000000001",
+      "name": "Agendamento (30 em 30 min)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -3800,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.nuxeo.com.br/rest/user/login/",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"client\": \"Gritsch\",\n  \"login\": \"Gritsch\",\n  \"psw\": \"gr1tsch\"\n}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "e1a1a101-0001-4000-8000-000000000002",
+      "name": "01 - Nuxeo Auth",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -3580,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.nuxeo.com.br/rest/report/targetAndPosition/?position=true",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Auth-Token",
+              "value": "={{ $json.token }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "id": "e1a1a101-0001-4000-8000-000000000003",
+      "name": "02 - GET targetAndPosition",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -3360,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst positions = response.positions || response.targets || response || [];\n\nif (!Array.isArray(positions) || positions.length === 0) {\n  return [{ json: { _sql: \"SELECT 0 AS inseridos;\", totalRecords: 0 } }];\n}\n\nconst esc = (v) => v != null ? String(v).replace(/'/g, \"''\") : null;\nconst valStr = (v) => v != null ? `'${esc(v)}'` : 'NULL';\nconst valNum = (v) => (v != null && !isNaN(v)) ? Number(v) : 'NULL';\nconst valBool = (v) => typeof v === 'boolean' ? (v ? 'TRUE' : 'FALSE') : 'NULL';\nconst valJson = (obj) => `'${JSON.stringify(obj).replace(/'/g, \"''\")}'::jsonb`;\n\nconst sqlStatements = [];\nsqlStatements.push(`\nCREATE SCHEMA IF NOT EXISTS bronze;\nCREATE TABLE IF NOT EXISTS bronze.nuxeo_veiculos_posicao (\n    id BIGSERIAL PRIMARY KEY,\n    placa VARCHAR(20),\n    complemento TEXT,\n    device_id INT,\n    icon INT,\n    serial VARCHAR(50),\n    endereco TEXT,\n    cidade VARCHAR(150),\n    estado VARCHAR(50),\n    pais VARCHAR(50),\n    latitude NUMERIC(10,6),\n    longitude NUMERIC(10,6),\n    data_gps TEXT,\n    ignicao BOOLEAN,\n    bloqueio BOOLEAN,\n    panico BOOLEAN,\n    velocidade NUMERIC(6,2),\n    bateria BOOLEAN,\n    antifurto TEXT,\n    payload_json JSONB,\n    ingested_at TIMESTAMPTZ DEFAULT NOW()\n);\n\n-- Self-healing: adiciona colunas caso a tabela ja existisse de criacoes anteriores\nALTER TABLE bronze.nuxeo_veiculos_posicao ADD COLUMN IF NOT EXISTS complemento TEXT;\nALTER TABLE bronze.nuxeo_veiculos_posicao ADD COLUMN IF NOT EXISTS device_id INT;\nALTER TABLE bronze.nuxeo_veiculos_posicao ADD COLUMN IF NOT EXISTS icon INT;\nALTER TABLE bronze.nuxeo_veiculos_posicao ADD COLUMN IF NOT EXISTS serial VARCHAR(50);\nALTER TABLE bronze.nuxeo_veiculos_posicao ADD COLUMN IF NOT EXISTS endereco TEXT;\nALTER TABLE bronze.nuxeo_veiculos_posicao ADD COLUMN IF NOT EXISTS cidade VARCHAR(150);\nALTER TABLE bronze.nuxeo_veiculos_posicao ADD COLUMN IF NOT EXISTS estado VARCHAR(50);\nALTER TABLE bronze.nuxeo_veiculos_posicao ADD COLUMN IF NOT EXISTS pais VARCHAR(50);\nALTER TABLE bronze.nuxeo_veiculos_posicao ADD COLUMN IF NOT EXISTS latitude NUMERIC(10,6);\nALTER TABLE bronze.nuxeo_veiculos_posicao ADD COLUMN IF NOT EXISTS longitude NUMERIC(10,6);\nALTER TABLE bronze.nuxeo_veiculos_posicao ADD COLUMN IF NOT EXISTS data_gps TEXT;\nALTER TABLE bronze.nuxeo_veiculos_posicao ADD COLUMN IF NOT EXISTS ignicao BOOLEAN;\nALTER TABLE bronze.nuxeo_veiculos_posicao ADD COLUMN IF NOT EXISTS bloqueio BOOLEAN;\nALTER TABLE bronze.nuxeo_veiculos_posicao ADD COLUMN IF NOT EXISTS panico BOOLEAN;\nALTER TABLE bronze.nuxeo_veiculos_posicao ADD COLUMN IF NOT EXISTS velocidade NUMERIC(6,2);\nALTER TABLE bronze.nuxeo_veiculos_posicao ADD COLUMN IF NOT EXISTS bateria BOOLEAN;\nALTER TABLE bronze.nuxeo_veiculos_posicao ADD COLUMN IF NOT EXISTS antifurto TEXT;\nALTER TABLE bronze.nuxeo_veiculos_posicao ADD COLUMN IF NOT EXISTS payload_json JSONB;\nALTER TABLE bronze.nuxeo_veiculos_posicao ADD COLUMN IF NOT EXISTS ingested_at TIMESTAMPTZ DEFAULT NOW();\n`);\n\nlet totalRecords = 0;\nconst chunkSize = 500;\n\nfor (let i = 0; i < positions.length; i += chunkSize) {\n  const chunk = positions.slice(i, i + chunkSize);\n  const values = chunk.map(pos => {\n    totalRecords++;\n    return '('\n      + valStr(pos.identifier) + ', '\n      + valStr(pos.complement) + ', '\n      + valNum(pos.deviceId) + ', '\n      + valNum(pos.icon) + ', '\n      + valStr(pos.serial) + ', '\n      + valStr(pos.address) + ', '\n      + valStr(pos.city) + ', '\n      + valStr(pos.state) + ', '\n      + valStr(pos.country) + ', '\n      + valNum(pos.latitude) + ', '\n      + valNum(pos.longitude) + ', '\n      + valStr(pos.dateGps) + ', '\n      + valBool(pos.ignition) + ', '\n      + valBool(pos.block) + ', '\n      + valBool(pos.panic) + ', '\n      + valNum(pos.speed) + ', '\n      + valBool(pos.baterry) + ', '\n      + valStr(pos.antiTheft) + ', '\n      + valJson(pos)\n      + ')';\n  }).join(',\\n');\n\n  sqlStatements.push(`\n    INSERT INTO bronze.nuxeo_veiculos_posicao (\n      placa, complemento, device_id, icon, serial, endereco, cidade, estado, pais,\n      latitude, longitude, data_gps, ignicao, bloqueio, panico, velocidade, bateria, antifurto, payload_json\n    ) VALUES ${values};\n  `);\n}\n\nreturn [{ json: { _sql: sqlStatements.join('\\n'), totalRecords } }];"
+      },
+      "id": "e1a1a101-0001-4000-8000-000000000004",
+      "name": "04 - Build INSERT Batch (Bronze)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3140,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json._sql }}",
+        "options": {}
+      },
+      "id": "e1a1a101-0001-4000-8000-000000000005",
+      "name": "05 - Inserir PostgreSQL DW (Bronze)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -2920,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Agendamento (30 em 30 min)": {
+      "main": [
+        [
+          {
+            "node": "01 - Nuxeo Auth",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "01 - Nuxeo Auth": {
+      "main": [
+        [
+          {
+            "node": "02 - GET targetAndPosition",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "02 - GET targetAndPosition": {
+      "main": [
+        [
+          {
+            "node": "04 - Build INSERT Batch (Bronze)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "04 - Build INSERT Batch (Bronze)": {
+      "main": [
+        [
+          {
+            "node": "05 - Inserir PostgreSQL DW (Bronze)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
