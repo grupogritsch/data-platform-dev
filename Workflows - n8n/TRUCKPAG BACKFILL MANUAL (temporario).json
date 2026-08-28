@@ -1,0 +1,1198 @@
+{
+  "name": "TRUCKPAG BACKFILL MANUAL (temporario)",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "id": "21b598d5-4ca7-4122-9914-7204a080ff0f",
+      "name": "1. Transações",
+      "position": [
+        -200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.truckpag.com.br/auth",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        20,
+        0
+      ],
+      "id": "208e2a66-66c1-4f5d-a2dd-7b2fe74ebd1f",
+      "name": "1. Transações · Login",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "nArLVyd1QB62QOT3",
+          "name": "Credenciais Api - Hashmd5"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "dias_backfill",
+              "value": 60,
+              "type": "number"
+            },
+            {
+              "id": "a2",
+              "name": "tamanho_chunk_dias",
+              "value": 10,
+              "type": "number"
+            },
+            {
+              "id": "a3",
+              "name": "delay_seg_entre_chunks",
+              "value": 15,
+              "type": "number"
+            },
+            {
+              "id": "a4",
+              "name": "url_base",
+              "value": "https://api.truckpag.com.br",
+              "type": "string"
+            },
+            {
+              "id": "a5",
+              "name": "workflow_nome",
+              "value": "TRUCKPAG BACKFILL MANUAL - Transacoes",
+              "type": "string"
+            },
+            {
+              "id": "a6",
+              "name": "entidade",
+              "value": "transacoes",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "7d1c2baa-55ff-46c7-b88d-30dec1de7855",
+      "name": "1. Transações · Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $input.first().json;\nconst chunks = [];\n\nconst fmtIso = (d) => {\n  const y = d.getUTCFullYear();\n  const m = String(d.getUTCMonth() + 1).padStart(2, '0');\n  const day = String(d.getUTCDate()).padStart(2, '0');\n  return `${y}-${m}-${day}`;\n};\n\nconst hoje = new Date();\nhoje.setUTCHours(0, 0, 0, 0);\n\nconst inicio = new Date(hoje);\ninicio.setUTCDate(inicio.getUTCDate() - (cfg.dias_backfill || 60));\n\nconst tamanhoChunk = cfg.tamanho_chunk_dias || 10;\n\nlet cursor = new Date(inicio);\nwhile (cursor <= hoje) {\n  const fim = new Date(cursor);\n  fim.setUTCDate(fim.getUTCDate() + tamanhoChunk - 1);\n  if (fim > hoje) fim.setTime(hoje.getTime());\n\n  chunks.push({\n    json: { ...cfg, chunk_dtini_iso: fmtIso(cursor), chunk_dtfim_iso: fmtIso(fim), usar_todas: true, is_diario: false }\n  });\n\n  cursor = new Date(fim);\n  cursor.setUTCDate(cursor.getUTCDate() + 1);\n}\n\nreturn chunks;"
+      },
+      "id": "47c70436-e511-4bc1-a0e9-6e1de6472b1b",
+      "name": "1. Transações · Gerar Chunks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "1822f439-19e1-4c35-9b2f-62d112eb32a8",
+      "name": "1. Transações · Loop",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        680,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $input.first().json;\nconst token = $('1. Transações · Login').first().json.token;\nif (!token) throw new Error('Token não encontrado no retorno do /auth');\nconst todasFlag = cfg.usar_todas ? 'S' : 'N';\nconst url = `${cfg.url_base}/Transacoes?dtIni=${cfg.chunk_dtini_iso}&dtFim=${cfg.chunk_dtfim_iso}&todas=${todasFlag}`;\nreturn [{ json: { ...cfg, token, url_final: url, bearer_header: `Bearer ${token}`, chunk_inicio_ts: Date.now() } }];"
+      },
+      "id": "a3f7e562-2796-42ec-bb43-57d2c1d8a878",
+      "name": "1. Transações · Monta URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url_final }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ $json.bearer_header }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 600000
+        }
+      },
+      "id": "a3d0ad34-ad71-41cc-b1f8-3e2826541894",
+      "name": "1. Transações · GET",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1120,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json;\nconst transacoes = raw.Transacoes || [];\n\nif (transacoes.length === 0) return [];\n\n// 1. MAPEAMENTO ATUALIZADO (Adicionado Garagem e CentroCusto)\nconst mapa = {\n  Transacao: 'transacao',\n  DataTransacao: 'data_transacao',\n  Hodometro: 'hodometro',\n  Valor: 'valor',\n  Litragem: 'litragem',\n  CodCombustivel: 'cod_combustivel',\n  NomeCombustivel: 'nome_combustivel',\n  Servico: 'servico',\n  TipoAbastecimento: 'tipo_abastecimento',\n  CodigoTanque: 'codigo_tanque',\n  NomeTanque: 'nome_tanque',\n  CodigoBomba: 'codigo_bomba',\n  NomeBomba: 'nome_bomba',\n  RazaoSocialPosto: 'razao_social_posto',\n  NomeFantasiaPosto: 'nome_fantasia_posto',\n  CNPJPosto: 'cnpj_posto',\n  CidadePosto: 'cidade_posto',\n  UFPosto: 'uf_posto',\n  CartaoMascarado: 'cartao_mascarado',\n  Motorista: 'motorista',\n  MatriculaMotorista: 'matricula_motorista',\n  CPFMotorista: 'cpf_motorista',\n  Placa: 'placa',\n  ModeloVeiculo: 'modelo_veiculo',\n  AnoVeiculo: 'ano_veiculo',\n  MatriculaVeiculo: 'matricula_veiculo',\n  MarcaVeiculo: 'marca_veiculo',\n  CorVeiculo: 'cor_veiculo',\n  TransacaoEstornada: 'transacao_estornada',\n  CNPJCliente: 'cnpj_cliente',\n  Garagem: 'garagem',           // <--- ADICIONADO\n  CentroCusto: 'centro_custo'   // <--- ADICIONADO\n};\n\nconst colunas = Object.values(mapa);\nconst colunasNumericas = new Set(['valor', 'litragem']);\n\nconst seen = new Map();\nfor (const tx of transacoes) {\n  const obj = {};\n  for (const [api, db] of Object.entries(mapa)) {\n    obj[db] = tx[api] !== undefined ? tx[api] : null;\n  }\n  seen.set(obj.transacao, obj);\n}\nconst dedup = Array.from(seen.values());\n\nconst CHUNK = 500;\nconst chunks = [];\nfor (let i = 0; i < dedup.length; i += CHUNK) chunks.push(dedup.slice(i, i + CHUNK));\n\nconst escapar = (v, col) => {\n  if (v === null || v === undefined || v === '') return 'NULL';\n  if (colunasNumericas.has(col)) {\n    const n = parseFloat(String(v).replace(',', '.'));\n    return isNaN(n) ? 'NULL' : n;\n  }\n  return `'${String(v).replace(/'/g, \"''\")}'`;\n};\n\nconst conflictCol = 'transacao';\nconst updateSet = colunas\n  .filter(c => c !== conflictCol)\n  .map(c => `\"${c}\" = EXCLUDED.\"${c}\"`)\n  .join(',\\n  ');\n\nconst result = [];\nfor (const chunk of chunks) {\n  const values = chunk.map(row => {\n    const vals = colunas.map(c => escapar(row[c], c));\n    return `(${vals.join(', ')}, (NOW() AT TIME ZONE 'America/Sao_Paulo'), NULL)`;\n  }).join(',\\n');\n\n  const sql = `INSERT INTO torre.integration_truckpag_transacoes (\n  ${colunas.map(c => `\"${c}\"`).join(', ')},\n  inserido,\n  atualizado\n)\nVALUES ${values}\nON CONFLICT (\"${conflictCol}\") DO UPDATE SET\n  ${updateSet},\n  atualizado = (NOW() AT TIME ZONE 'America/Sao_Paulo');`.trim();\n\n  result.push({ json: { sql, qtd_registros: chunk.length } });\n}\n\nreturn result;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        0
+      ],
+      "id": "59f6f3e6-033f-4b4e-bf20-a335ca1fc7f9",
+      "name": "1. Transações · Build SQL"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "{{ $json.sql }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1560,
+        0
+      ],
+      "id": "28ba0291-0991-4082-98a9-0ee655680523",
+      "name": "1. Transações · UPSERT transacoes",
+      "credentials": {
+        "postgres": {
+          "id": "0nuM10NKLuw9hW1i",
+          "name": "DW - Gabriel"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO torre.integration_truckpag_backfill_log\n  (workflow_nome, entidade, modo, dt_ini, dt_fim, qtd_registros, status, finalizado_em, duracao_segundos)\nVALUES (\n  'TRUCKPAG BACKFILL MANUAL - Transacoes',\n  'transacoes',\n  'backfill',\n  '{{ $('1. Transações · Gerar Chunks').item.json.chunk_dtini_iso }}',\n  '{{ $('1. Transações · Gerar Chunks').item.json.chunk_dtfim_iso }}',\n  {{ $('1. Transações · Build SQL').item.json.qtd_registros ?? 0 }},\n  'sucesso',\n  (NOW() AT TIME ZONE 'America/Sao_Paulo'),\n  {{ (()=>{ const ts = $('1. Transações · Monta URL').item.json.chunk_inicio_ts; return ts ? Math.round((Date.now() - ts) / 1000) : 0; })() }}\n);",
+        "options": {}
+      },
+      "id": "6560fa43-3166-4199-b5e0-b77b348c2cd4",
+      "name": "1. Transações · Log",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1780,
+        0
+      ],
+      "executeOnce": true,
+      "credentials": {
+        "postgres": {
+          "id": "0nuM10NKLuw9hW1i",
+          "name": "DW - Gabriel"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "amount": "={{ $('1. Transações · Config').first().json.delay_seg_entre_chunks }}"
+      },
+      "id": "ed13e13a-a227-4368-a2c2-4d90f1faa8f9",
+      "name": "1. Transações · Wait",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2000,
+        0
+      ]
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "id": "2a2a304a-82ac-4e25-b32a-86ba45f17f03",
+      "name": "2. Títulos",
+      "position": [
+        -200,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.truckpag.com.br/auth",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        20,
+        400
+      ],
+      "id": "ce72409c-898e-459e-a7e5-b18c9dcebc51",
+      "name": "2. Títulos · Login",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "nArLVyd1QB62QOT3",
+          "name": "Credenciais Api - Hashmd5"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "dias_backfill",
+              "value": 60,
+              "type": "number"
+            },
+            {
+              "id": "a2",
+              "name": "tamanho_chunk_dias",
+              "value": 10,
+              "type": "number"
+            },
+            {
+              "id": "a3",
+              "name": "delay_seg_entre_chunks",
+              "value": 15,
+              "type": "number"
+            },
+            {
+              "id": "a4",
+              "name": "url_base",
+              "value": "https://api.truckpag.com.br",
+              "type": "string"
+            },
+            {
+              "id": "a5",
+              "name": "workflow_nome",
+              "value": "TRUCKPAG BACKFILL MANUAL - Titulos",
+              "type": "string"
+            },
+            {
+              "id": "a6",
+              "name": "entidade",
+              "value": "titulos",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "5afb50dc-fb0e-4b75-a752-65a6bb2be3a0",
+      "name": "2. Títulos · Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        240,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $input.first().json;\nconst chunks = [];\n\nconst fmtIso = (d) => {\n  const y = d.getUTCFullYear();\n  const m = String(d.getUTCMonth() + 1).padStart(2, '0');\n  const day = String(d.getUTCDate()).padStart(2, '0');\n  return `${y}-${m}-${day}`;\n};\n\nconst hoje = new Date();\nhoje.setUTCHours(0, 0, 0, 0);\n\nconst inicio = new Date(hoje);\ninicio.setUTCDate(inicio.getUTCDate() - (cfg.dias_backfill || 60));\n\nconst tamanhoChunk = cfg.tamanho_chunk_dias || 10;\n\nlet cursor = new Date(inicio);\nwhile (cursor <= hoje) {\n  const fim = new Date(cursor);\n  fim.setUTCDate(fim.getUTCDate() + tamanhoChunk - 1);\n  if (fim > hoje) fim.setTime(hoje.getTime());\n\n  chunks.push({\n    json: { ...cfg, chunk_dtini_iso: fmtIso(cursor), chunk_dtfim_iso: fmtIso(fim), usar_todas: true, is_diario: false }\n  });\n\n  cursor = new Date(fim);\n  cursor.setUTCDate(cursor.getUTCDate() + 1);\n}\n\nreturn chunks;"
+      },
+      "id": "965d4a68-97e0-428d-abf4-e92dc4110361",
+      "name": "2. Títulos · Gerar Chunks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "e42e275c-938e-4f3d-b31b-7c0257910408",
+      "name": "2. Títulos · Loop",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        680,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $input.first().json;\nconst token = $('2. Títulos · Login').first().json.token;\nif (!token) throw new Error('Token não encontrado no retorno do /auth');\nconst todasFlag = cfg.usar_todas ? 'S' : 'N';\nconst url = `${cfg.url_base}/Faturamento/Titulos?dtIni=${cfg.chunk_dtini_iso}&dtFim=${cfg.chunk_dtfim_iso}&todas=${todasFlag}`;\nreturn [{ json: { ...cfg, token, url_final: url, bearer_header: `Bearer ${token}`, chunk_inicio_ts: Date.now() } }];"
+      },
+      "id": "e37e4590-cee9-4eda-919d-8017e32c9cf3",
+      "name": "2. Títulos · Monta URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url_final }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ $json.bearer_header }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 600000
+        }
+      },
+      "id": "763dba13-b4d3-4283-8905-9cbad67d40ba",
+      "name": "2. Títulos · GET",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1120,
+        400
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// API retorna {\"data\": \"<string JSON>\"} ou {\"data\": [...]} ou array direto\n// Esse bloco normaliza as 3 formas\nconst items = $input.all();\nlet titulos = [];\n\nfor (const item of items) {\n  const j = item.json;\n  let dados = null;\n\n  if (Array.isArray(j)) {\n    dados = j;\n  } else if (j && j.data !== undefined) {\n    if (typeof j.data === 'string') {\n      try {\n        dados = JSON.parse(j.data);\n      } catch (e) {\n        dados = [];\n      }\n    } else {\n      dados = j.data;\n    }\n  } else if (j && j.titulo_id !== undefined) {\n    dados = [j];\n  }\n\n  if (Array.isArray(dados)) {\n    titulos.push(...dados.filter(t => t && t.titulo_id !== undefined));\n  }\n}\n\nif (titulos.length === 0) return [];\n\n// === MAPEAMENTO TITULOS (cabeçalho) ===\nconst mapaTitulos = {\n  titulo_id: 'titulo_id',\n  data_geracao: 'data_geracao',\n  data_vencimento: 'data_vencimento',\n  valor_total: 'valor_total'\n};\nconst colsTitulos = Object.values(mapaTitulos);\nconst colsDataTitulos = new Set(['data_geracao', 'data_vencimento']);\nconst colsNumericTitulos = new Set(['valor_total']);\n\n// === MAPEAMENTO ITENS ===\nconst mapaItens = {\n  titulo_id: 'titulo_id',\n  transacao_id: 'transacao_id',\n  tipo: 'tipo',\n  valor: 'valor',\n  chave_nfe: 'chave_nfe'\n};\nconst colsItens = Object.values(mapaItens);\nconst colsNumericItens = new Set(['valor']);\n\n// === DEDUP TITULOS (por titulo_id) ===\nconst seenTitulos = new Map();\nconst todosItens = [];\n\nfor (const t of titulos) {\n  const tid = String(t.titulo_id);\n  const objT = {\n    titulo_id: tid,\n    data_geracao: t.data_geracao || null,\n    data_vencimento: t.data_vencimento || null,\n    valor_total: t.valor_total !== undefined ? t.valor_total : null\n  };\n  seenTitulos.set(tid, objT);\n\n  const itens = Array.isArray(t.itens) ? t.itens : [];\n  for (const it of itens) {\n    todosItens.push({\n      titulo_id: tid,\n      transacao_id: it.transacao_id !== undefined ? String(it.transacao_id) : null,\n      tipo: it.tipo || null,\n      valor: it.valor !== undefined ? it.valor : null,\n      chave_nfe: it.chave_nfe || null\n    });\n  }\n}\n\nconst titulosDedup = Array.from(seenTitulos.values());\n\n// === DEDUP ITENS (por titulo_id + transacao_id) ===\nconst seenItens = new Map();\nfor (const it of todosItens) {\n  if (!it.transacao_id) continue;\n  const key = `${it.titulo_id}::${it.transacao_id}`;\n  seenItens.set(key, it);\n}\nconst itensDedup = Array.from(seenItens.values());\n\nconst escTitulos = (v, col) => {\n  if (v === null || v === undefined || v === '') return 'NULL';\n  if (colsDataTitulos.has(col)) {\n    // Adiciona as 3 horas perdidas na string da data antes de mandar pro banco\n    return `'${String(v).replace(/'/g, \"''\")} 03:00:00+00'::timestamptz`;\n  }\n  if (colsNumericTitulos.has(col)) {\n    const n = parseFloat(String(v).replace(',', '.'));\n    return isNaN(n) ? 'NULL' : n;\n  }\n  return `'${String(v).replace(/'/g, \"''\")}'`;\n};\n\nconst escItens = (v, col) => {\n  if (v === null || v === undefined || v === '') return 'NULL';\n  if (colsNumericItens.has(col)) {\n    const n = parseFloat(String(v).replace(',', '.'));\n    return isNaN(n) ? 'NULL' : n;\n  }\n  return `'${String(v).replace(/'/g, \"''\")}'`;\n};\n\n// === Gerar SQL para TITULOS ===\nlet sqlTitulos = null;\nif (titulosDedup.length > 0) {\n  const conflictColT = 'titulo_id';\n  const updateSetT = colsTitulos\n    .filter(c => c !== conflictColT)\n    .map(c => `\"${c}\" = EXCLUDED.\"${c}\"`)\n    .join(',\\n  ');\n\n  const valuesT = titulosDedup.map(row => {\n    const vals = colsTitulos.map(c => escTitulos(row[c], c));\n    return `(${vals.join(', ')}, NOW(), NULL)`;\n  }).join(',\\n');\n\n  sqlTitulos = `INSERT INTO torre.integration_truckpag_titulos (\n  ${colsTitulos.map(c => `\"${c}\"`).join(', ')},\n  created_at,\n  updated_at\n)\nVALUES ${valuesT}\nON CONFLICT (\"${conflictColT}\") DO UPDATE SET\n  ${updateSetT},\n  updated_at = NOW();`.trim();\n}\n\n// === Gerar SQL para ITENS ===\nlet sqlItens = null;\nif (itensDedup.length > 0) {\n  const conflictColsI = ['titulo_id', 'transacao_id'];\n  const updateSetI = colsItens\n    .filter(c => !conflictColsI.includes(c))\n    .map(c => `\"${c}\" = EXCLUDED.\"${c}\"`)\n    .join(',\\n  ');\n\n  const valuesI = itensDedup.map(row => {\n    const vals = colsItens.map(c => escItens(row[c], c));\n    return `(${vals.join(', ')}, NOW(), NULL)`;\n  }).join(',\\n');\n\n  sqlItens = `INSERT INTO torre.integration_truckpag_titulo_itens (\n  ${colsItens.map(c => `\"${c}\"`).join(', ')},\n  created_at,\n  updated_at\n)\nVALUES ${valuesI}\nON CONFLICT (${conflictColsI.map(c => `\"${c}\"`).join(', ')}) DO UPDATE SET\n  ${updateSetI},\n  updated_at = NOW();`.trim();\n}\n\nreturn [{\n  json: {\n    sql_titulos: sqlTitulos,\n    sql_itens: sqlItens,\n    qtd_titulos: titulosDedup.length,\n    qtd_itens: itensDedup.length,\n    qtd_registros: titulosDedup.length + itensDedup.length\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        400
+      ],
+      "id": "28300cad-0362-4a1e-938d-300c70189dc7",
+      "name": "2. Títulos · Build SQL"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "{{ $json.sql_titulos }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1560,
+        400
+      ],
+      "id": "f2af0c6e-48f6-4545-89ab-9c062dbd10c7",
+      "name": "2. Títulos · UPSERT titulos",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "{{ $('Build SQL UPSERT').item.json.sql_itens }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1780,
+        400
+      ],
+      "id": "bea7811f-b6e0-45b5-81fd-92276587a47e",
+      "name": "2. Títulos · UPSERT titulo_itens",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO torre.integration_truckpag_backfill_log\n  (workflow_nome, entidade, modo, dt_ini, dt_fim, qtd_registros, status, finalizado_em, duracao_segundos)\nVALUES (\n  'TRUCKPAG BACKFILL MANUAL - Titulos',\n  'titulos',\n  'backfill',\n  '{{ $('2. Títulos · Gerar Chunks').item.json.chunk_dtini_iso }}',\n  '{{ $('2. Títulos · Gerar Chunks').item.json.chunk_dtfim_iso }}',\n  {{ $('2. Títulos · Build SQL').item.json.qtd_registros ?? 0 }},\n  'sucesso',\n  (NOW() AT TIME ZONE 'America/Sao_Paulo'),\n  {{ (()=>{ const ts = $('2. Títulos · Monta URL').item.json.chunk_inicio_ts; return ts ? Math.round((Date.now() - ts) / 1000) : 0; })() }}\n);",
+        "options": {}
+      },
+      "id": "cc6820ae-fdae-4942-9e0f-5729ff09a6a0",
+      "name": "2. Títulos · Log",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2000,
+        400
+      ],
+      "executeOnce": true,
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "amount": "={{ $('2. Títulos · Config').first().json.delay_seg_entre_chunks }}"
+      },
+      "id": "7def9133-6be2-4542-b7ce-f3535db17d19",
+      "name": "2. Títulos · Wait",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2220,
+        400
+      ]
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "id": "8647a1d3-c055-4eaa-a78e-41c39d37ef86",
+      "name": "3. NFe Vínculos",
+      "position": [
+        -200,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.truckpag.com.br/auth",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        20,
+        800
+      ],
+      "id": "e71aa392-3bbe-41f0-ba11-95bf44971972",
+      "name": "3. NFe Vínculos · Login",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "nArLVyd1QB62QOT3",
+          "name": "Credenciais Api - Hashmd5"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "dias_backfill",
+              "value": 60,
+              "type": "number"
+            },
+            {
+              "id": "a2",
+              "name": "tamanho_chunk_dias",
+              "value": 10,
+              "type": "number"
+            },
+            {
+              "id": "a3",
+              "name": "delay_seg_entre_chunks",
+              "value": 15,
+              "type": "number"
+            },
+            {
+              "id": "a4",
+              "name": "url_base",
+              "value": "https://api.truckpag.com.br",
+              "type": "string"
+            },
+            {
+              "id": "a5",
+              "name": "workflow_nome",
+              "value": "TRUCKPAG BACKFILL MANUAL - NFeVinculos",
+              "type": "string"
+            },
+            {
+              "id": "a6",
+              "name": "entidade",
+              "value": "nfe_vinculos",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "693b2c82-668e-48eb-b0cc-0dd141da1ace",
+      "name": "3. NFe Vínculos · Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        240,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $input.first().json;\nconst chunks = [];\n\nconst fmtIso = (d) => {\n  const y = d.getUTCFullYear();\n  const m = String(d.getUTCMonth() + 1).padStart(2, '0');\n  const day = String(d.getUTCDate()).padStart(2, '0');\n  return `${y}-${m}-${day}`;\n};\n\nconst hoje = new Date();\nhoje.setUTCHours(0, 0, 0, 0);\n\nconst inicio = new Date(hoje);\ninicio.setUTCDate(inicio.getUTCDate() - (cfg.dias_backfill || 60));\n\nconst tamanhoChunk = cfg.tamanho_chunk_dias || 10;\n\nlet cursor = new Date(inicio);\nwhile (cursor <= hoje) {\n  const fim = new Date(cursor);\n  fim.setUTCDate(fim.getUTCDate() + tamanhoChunk - 1);\n  if (fim > hoje) fim.setTime(hoje.getTime());\n\n  chunks.push({\n    json: { ...cfg, chunk_dtini_iso: fmtIso(cursor), chunk_dtfim_iso: fmtIso(fim), usar_todas: true, is_diario: false }\n  });\n\n  cursor = new Date(fim);\n  cursor.setUTCDate(cursor.getUTCDate() + 1);\n}\n\nreturn chunks;"
+      },
+      "id": "07592408-9f51-4d2d-9046-d2dbd9aef927",
+      "name": "3. NFe Vínculos · Gerar Chunks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "ff22d740-f45e-4211-bf2a-40f0d4b2b2a8",
+      "name": "3. NFe Vínculos · Loop",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        680,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $input.first().json;\nconst token = $('3. NFe Vínculos · Login').first().json.token;\nif (!token) throw new Error('Token não encontrado no retorno do /auth');\nconst todasFlag = cfg.usar_todas ? 'S' : 'N';\nconst url = `${cfg.url_base}/NotaFiscal/Vinculo?dtIni=${cfg.chunk_dtini_iso}&dtFim=${cfg.chunk_dtfim_iso}&todas=${todasFlag}`;\nreturn [{ json: { ...cfg, token, url_final: url, bearer_header: `Bearer ${token}`, chunk_inicio_ts: Date.now() } }];"
+      },
+      "id": "63484a68-d6d7-46f6-a2d4-bb8915b7399b",
+      "name": "3. NFe Vínculos · Monta URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url_final }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ $json.bearer_header }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 600000
+        }
+      },
+      "id": "f9c0258e-2f3e-4ff0-8c91-007e8d6881b3",
+      "name": "3. NFe Vínculos · GET",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1120,
+        800
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Coletar todos os items que chegaram do GET (array no root da API)\nconst items = $input.all();\nconst vinculos = items.map(i => i.json).filter(v => v && v.IdTransacao);\n\nif (vinculos.length === 0) return [];\n\n// Mapa API (PascalCase) -> coluna do banco (snake_case)\n// CORRIGIDO: incluídos numero_nfe, valor_total, data_emissao, cnpj_destinatario\n// e 'Operacao' com O maiúsculo (é assim que a API envia).\nconst mapa = {\n  IdTransacao:      'id_transacao',\n  ChaveNFe:         'chave_nfe',\n  NumeroNFe:        'numero_nfe',\n  VlTotal:          'valor_total',\n  DtEmissao:        'data_emissao',\n  CnpjDestinatario: 'cnpj_destinatario',\n  VctoPrevisto:     'vencimento_previsto',\n  Operacao:         'operacao'\n};\n\nconst colunas = Object.values(mapa);\nconst colunasData    = new Set(['data_emissao', 'vencimento_previsto']); // ::timestamptz\nconst colunasNumeric = new Set(['valor_total']);                          // ::numeric\n\n// Dedup pelo id_transacao (chave única); última ocorrência prevalece\nconst seen = new Map();\nfor (const v of vinculos) {\n  const obj = {};\n  for (const [api, db] of Object.entries(mapa)) {\n    obj[db] = v[api] !== undefined ? v[api] : null;\n  }\n  seen.set(String(obj.id_transacao), obj);\n}\nconst dedup = Array.from(seen.values());\n\nconst CHUNK = 500;\nconst chunks = [];\nfor (let i = 0; i < dedup.length; i += CHUNK) chunks.push(dedup.slice(i, i + CHUNK));\n\nconst escapar = (v, col) => {\n  if (v === null || v === undefined || v === '') return 'NULL';\n  if (colunasData.has(col)) {\n    return `'${String(v).replace(/'/g, \"''\")}'::timestamptz`;\n  }\n  if (colunasNumeric.has(col)) {\n    // troca vírgula decimal por ponto, por segurança de locale\n    const num = String(v).replace(',', '.').replace(/'/g, \"''\");\n    return `'${num}'::numeric`;\n  }\n  return `'${String(v).replace(/'/g, \"''\")}'`;\n};\n\nconst conflictCol = 'id_transacao';\nconst updateSet = colunas\n  .filter(c => c !== conflictCol)\n  .map(c => `\"${c}\" = EXCLUDED.\"${c}\"`)\n  .join(',\\n  ');\n\nconst result = [];\nfor (const chunk of chunks) {\n  const values = chunk.map(row => {\n    const vals = colunas.map(c => escapar(row[c], c));\n    return `(${vals.join(', ')}, NOW(), NULL)`;\n  }).join(',\\n');\n\n  const sql = `INSERT INTO torre.integration_truckpag_nfe_vinculos (\n  ${colunas.map(c => `\"${c}\"`).join(', ')},\n  created_at,\n  updated_at\n)\nVALUES ${values}\nON CONFLICT (\"${conflictCol}\") DO UPDATE SET\n  ${updateSet},\n  updated_at = NOW();`.trim();\n\n  result.push({\n  json: { sql, qtd_registros: chunk.length },\n  pairedItem: { item: 0 }\n});\n}\n\nreturn result;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        800
+      ],
+      "id": "aa12c08e-d110-4fca-bc8d-ebbf31f5e281",
+      "name": "3. NFe Vínculos · Build SQL"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "{{ $json.sql }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1560,
+        800
+      ],
+      "id": "46c76d1c-1de6-4627-a1d9-4b3d83828500",
+      "name": "3. NFe Vínculos · UPSERT nfe_vinculos",
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO torre.integration_truckpag_backfill_log\n  (workflow_nome, entidade, modo, dt_ini, dt_fim, qtd_registros, status, finalizado_em, duracao_segundos)\nVALUES (\n  'TRUCKPAG BACKFILL MANUAL - NFeVinculos',\n  'nfe_vinculos',\n  'backfill',\n  '{{ $('3. NFe Vínculos · Gerar Chunks').item.json.chunk_dtini_iso }}',\n  '{{ $('3. NFe Vínculos · Gerar Chunks').item.json.chunk_dtfim_iso }}',\n  {{ $('3. NFe Vínculos · Build SQL').item.json.qtd_registros ?? 0 }},\n  'sucesso',\n  (NOW() AT TIME ZONE 'America/Sao_Paulo'),\n  {{ (()=>{ const ts = $('3. NFe Vínculos · Monta URL').item.json.chunk_inicio_ts; return ts ? Math.round((Date.now() - ts) / 1000) : 0; })() }}\n);",
+        "options": {}
+      },
+      "id": "1013d94b-5593-4007-b0ea-abcce713cc9a",
+      "name": "3. NFe Vínculos · Log",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1780,
+        800
+      ],
+      "executeOnce": true,
+      "credentials": {
+        "postgres": {
+          "id": "rpwYRdA37HSZhsvm",
+          "name": "Interno - DW"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "amount": "={{ $('3. NFe Vínculos · Config').first().json.delay_seg_entre_chunks }}"
+      },
+      "id": "163af647-c6ef-4198-86d4-e02a624ae5ec",
+      "name": "3. NFe Vínculos · Wait",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2000,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Backfill manual (temporario) — 28/08/2026\n\nCriado pra recuperar as 5 transacoes sumidas da fatura 263144 (e dados relacionados de titulos/NFe). **Nao mexe nos 3 workflows 'TRUCKPAG LEGADO' originais.**\n\n### Como usar\n1. Roda **1. Transações** primeiro (clica no gatilho manual dele). Espera terminar -- confere em `torre.integration_truckpag_backfill_log` (`workflow_nome = 'TRUCKPAG BACKFILL MANUAL - Transacoes'`) que apareceu linha com `status = 'sucesso'`.\n2. **So depois** roda **2. Títulos**. Espera terminar.\n3. **So depois** roda **3. NFe Vínculos**.\n\n**NUNCA roda dois ao mesmo tempo** — foi rodar 2 backfills juntos que estourou o pool de conexao do Postgres em 28/08/2026 (erro 'too many clients already', afetou todo mundo que usa o banco).\n\nCobre os ultimos 60 dias (`dias_backfill`), em chunks de 10 dias (`tamanho_chunk_dias`), com 15s de espera entre chunks -- mais conservador que os workflows originais (que usam 5 dias / 10s) de proposito, pra reduzir carga de conexao simultanea.\n\nDepois de rodar os 3, confere se as 5 transacoes voltaram:\n```sql\nSELECT transacao FROM torre.integration_truckpag_transacoes\nWHERE transacao IN ('22838161','22829582','22830387','22820741','22813771');\n```\nDeveria devolver as 5 linhas (hoje devolve 0).",
+        "height": 620,
+        "width": 480
+      },
+      "id": "1512ddb4-5a23-4bf2-aa11-9df93a1fc15a",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -760,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "1. Transações": {
+      "main": [
+        [
+          {
+            "node": "1. Transações · Login",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1. Transações · Login": {
+      "main": [
+        [
+          {
+            "node": "1. Transações · Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1. Transações · Config": {
+      "main": [
+        [
+          {
+            "node": "1. Transações · Gerar Chunks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1. Transações · Gerar Chunks": {
+      "main": [
+        [
+          {
+            "node": "1. Transações · Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1. Transações · Loop": {
+      "main": [
+        [],
+        [
+          {
+            "node": "1. Transações · Monta URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1. Transações · Monta URL": {
+      "main": [
+        [
+          {
+            "node": "1. Transações · GET",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1. Transações · GET": {
+      "main": [
+        [
+          {
+            "node": "1. Transações · Build SQL",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "1. Transações · Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1. Transações · Build SQL": {
+      "main": [
+        [
+          {
+            "node": "1. Transações · UPSERT transacoes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1. Transações · UPSERT transacoes": {
+      "main": [
+        [
+          {
+            "node": "1. Transações · Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1. Transações · Log": {
+      "main": [
+        [
+          {
+            "node": "1. Transações · Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1. Transações · Wait": {
+      "main": [
+        [
+          {
+            "node": "1. Transações · Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2. Títulos": {
+      "main": [
+        [
+          {
+            "node": "2. Títulos · Login",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2. Títulos · Login": {
+      "main": [
+        [
+          {
+            "node": "2. Títulos · Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2. Títulos · Config": {
+      "main": [
+        [
+          {
+            "node": "2. Títulos · Gerar Chunks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2. Títulos · Gerar Chunks": {
+      "main": [
+        [
+          {
+            "node": "2. Títulos · Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2. Títulos · Loop": {
+      "main": [
+        [],
+        [
+          {
+            "node": "2. Títulos · Monta URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2. Títulos · Monta URL": {
+      "main": [
+        [
+          {
+            "node": "2. Títulos · GET",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2. Títulos · GET": {
+      "main": [
+        [
+          {
+            "node": "2. Títulos · Build SQL",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "2. Títulos · Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2. Títulos · Build SQL": {
+      "main": [
+        [
+          {
+            "node": "2. Títulos · UPSERT titulos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2. Títulos · UPSERT titulos": {
+      "main": [
+        [
+          {
+            "node": "2. Títulos · UPSERT titulo_itens",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2. Títulos · UPSERT titulo_itens": {
+      "main": [
+        [
+          {
+            "node": "2. Títulos · Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2. Títulos · Log": {
+      "main": [
+        [
+          {
+            "node": "2. Títulos · Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2. Títulos · Wait": {
+      "main": [
+        [
+          {
+            "node": "2. Títulos · Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3. NFe Vínculos": {
+      "main": [
+        [
+          {
+            "node": "3. NFe Vínculos · Login",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3. NFe Vínculos · Login": {
+      "main": [
+        [
+          {
+            "node": "3. NFe Vínculos · Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3. NFe Vínculos · Config": {
+      "main": [
+        [
+          {
+            "node": "3. NFe Vínculos · Gerar Chunks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3. NFe Vínculos · Gerar Chunks": {
+      "main": [
+        [
+          {
+            "node": "3. NFe Vínculos · Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3. NFe Vínculos · Loop": {
+      "main": [
+        [],
+        [
+          {
+            "node": "3. NFe Vínculos · Monta URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3. NFe Vínculos · Monta URL": {
+      "main": [
+        [
+          {
+            "node": "3. NFe Vínculos · GET",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3. NFe Vínculos · GET": {
+      "main": [
+        [
+          {
+            "node": "3. NFe Vínculos · Build SQL",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "3. NFe Vínculos · Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3. NFe Vínculos · Build SQL": {
+      "main": [
+        [
+          {
+            "node": "3. NFe Vínculos · UPSERT nfe_vinculos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3. NFe Vínculos · UPSERT nfe_vinculos": {
+      "main": [
+        [
+          {
+            "node": "3. NFe Vínculos · Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3. NFe Vínculos · Log": {
+      "main": [
+        [
+          {
+            "node": "3. NFe Vínculos · Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3. NFe Vínculos · Wait": {
+      "main": [
+        [
+          {
+            "node": "3. NFe Vínculos · Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fb581638443806838dcc4ad5d9ab57cd83fc9fe2e7f923a0752e9d8321c3faf5"
+  },
+  "tags": [
+    {
+      "name": "truckpag"
+    }
+  ]
+}
