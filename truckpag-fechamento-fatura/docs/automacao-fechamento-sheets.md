@@ -78,8 +78,42 @@ e-mail.
 4. Em **todo node "Limpar aba \*"/"Escrever aba \*"/"Escrever Info"** (11 ao
    todo): trocar `PREENCHER-ID-DA-PLANILHA` pelo ID copiado no passo 2, e
    selecionar/criar a credencial Google Sheets OAuth2 (conta de serviço ou
-   OAuth do Workspace — precisa ter acesso de edição na planilha).
+   OAuth do Workspace — precisa ter acesso de edição na planilha). **Se
+   nunca criou essa credencial antes**, ver "Como criar a credencial Google
+   Sheets no n8n" logo abaixo antes de continuar.
 5. Nos nodes Postgres, selecionar a credencial do DW (igual antes).
+
+### Como criar a credencial Google Sheets no n8n (primeira vez)
+
+No **Google Cloud Console** (console.cloud.google.com — pode usar a conta
+gritsch.com.br do Workspace):
+
+1. Criar um projeto (ou usar um existente da empresa).
+2. **APIs e serviços → Biblioteca** → ativar **Google Sheets API** e
+   **Google Drive API** (o Drive também é usado por baixo dos panos pelo
+   node, e é o mesmo que o Apps Script usa pra exportar o `.xlsx`).
+3. **APIs e serviços → Tela de consentimento OAuth**: conta do Workspace
+   (gritsch.com.br) → escolher **Interno** (sem aprovação do Google, só
+   gente da organização usa). Conta Gmail pessoal → Externo, e adicionar
+   seu e-mail como "usuário de teste".
+4. **APIs e serviços → Credenciais → Criar credenciais → ID do cliente
+   OAuth** → tipo "Aplicativo da Web". Não preencher a URL de
+   redirecionamento ainda — precisa pegar ela no n8n primeiro (próximo
+   passo). Deixar essa aba aberta.
+
+No **n8n**:
+
+5. Credentials → New → procurar "Google Sheets" → escolher **OAuth2**.
+6. O n8n mostra uma **URL de redirecionamento** (algo como
+   `http://SEU-HOST:5678/rest/oauth2-credential/callback`) — copiar ela.
+7. Voltar pro Google Cloud (passo 4), colar essa URL em "URIs de
+   redirecionamento autorizados" → salvar → copiar o **Client ID** e o
+   **Client Secret** gerados.
+8. Colar os dois de volta no n8n, salvar a credencial, clicar em **Sign in
+   with Google** (abre popup de login, autorizar). Se conectar, aparece
+   "✓ Connected".
+9. Essa mesma credencial serve pros 11 nodes Google Sheets do workflow —
+   selecionar a mesma nos outros 10, não precisa repetir o processo.
 6. **Extensões → Apps Script** na planilha → colar o conteúdo de
    `EnviarFechamentoSemanal.gs` inteiro.
 7. Trocar `DESTINATARIO` no topo do script pelo e-mail real.
