@@ -1,0 +1,941 @@
+{
+  "name": "Fechamento Fatura Combustível - Truckpag (Google Sheets)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "5513f313-1cb7-484e-8f92-39d0dd8367f0",
+      "name": "Teste manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -400,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "assign-data-teste",
+              "name": "data_vencimento",
+              "value": "2026-09-02",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "2e124384-f276-4f93-8194-30f18541ad30",
+      "name": "Data de vencimento (teste)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -160,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": [
+                4
+              ],
+              "triggerAtHour": 6
+            }
+          ]
+        }
+      },
+      "id": "e1e596df-3681-4099-9b29-2680ccd06b9b",
+      "name": "Toda quinta-feira",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -400,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT to_char(MIN(titulo_data_vencimento), 'YYYY-MM-DD') AS data_vencimento\nFROM torre.vw_conciliacao_truckpag_contabilidade\nWHERE titulo_data_vencimento >= CURRENT_DATE;",
+        "options": {}
+      },
+      "id": "cf9e6d6f-eadf-431a-ac6a-1a7d65031768",
+      "name": "Próxima fatura (auto)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -160,
+        220
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "Truckpag DW Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "6c193d2a-35e4-4c93-8e48-73a8ce582cec",
+      "name": "Fatura alvo",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        80,
+        110
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "cond-data-nao-vazia",
+              "leftValue": "={{ $json.data_vencimento }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "4da02c3f-a728-48b0-9831-c1b0c676cd1b",
+      "name": "Tem fatura pendente?",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        220,
+        110
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM torre.vw_conciliacao_truckpag_resumo_v2\nWHERE fatura IN (\n  SELECT DISTINCT fatura_atual FROM torre.vw_conciliacao_truckpag_contabilidade_ajustada\n  WHERE titulo_data_vencimento >= $1::date\n  AND titulo_data_vencimento < ($1::date + INTERVAL '1 day')\n)\nORDER BY ord",
+        "options": {
+          "queryReplacement": "={{ $json.data_vencimento }}"
+        }
+      },
+      "id": "d3dc9dfe-a969-418f-a978-7be61667c4ec",
+      "name": "Resumo",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        340,
+        -140
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "Truckpag DW Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM torre.vw_conciliacao_truckpag_contabilidade_ajustada\nWHERE titulo_data_vencimento >= $1::date\n  AND titulo_data_vencimento < ($1::date + INTERVAL '1 day')",
+        "options": {
+          "queryReplacement": "={{ $json.data_vencimento }}"
+        }
+      },
+      "id": "30456ae0-2266-4fac-8135-5867841a689c",
+      "name": "Contabilidade",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        340,
+        20
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "Truckpag DW Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM torre.vw_conciliacao_truckpag_relatorio\nWHERE titulo_data_vencimento >= $1::date\n  AND titulo_data_vencimento < ($1::date + INTERVAL '1 day')",
+        "options": {
+          "queryReplacement": "={{ $json.data_vencimento }}"
+        }
+      },
+      "id": "be03b165-8f9a-4366-8858-200eae76cd5a",
+      "name": "Relatorio",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        340,
+        180
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "Truckpag DW Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM torre.vw_conciliacao_truckpag_rateio_garagem\nWHERE fatura IN (\n  SELECT DISTINCT fatura_atual FROM torre.vw_conciliacao_truckpag_contabilidade_ajustada\n  WHERE titulo_data_vencimento >= $1::date\n  AND titulo_data_vencimento < ($1::date + INTERVAL '1 day')\n)",
+        "options": {
+          "queryReplacement": "={{ $json.data_vencimento }}"
+        }
+      },
+      "id": "57b065a4-d951-4546-859d-f8a1fd071e81",
+      "name": "Rateio Garagem",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        340,
+        340
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "Truckpag DW Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM torre.vw_conciliacao_truckpag_rateio_posto\nWHERE fatura IN (\n  SELECT DISTINCT fatura_atual FROM torre.vw_conciliacao_truckpag_contabilidade_ajustada\n  WHERE titulo_data_vencimento >= $1::date\n  AND titulo_data_vencimento < ($1::date + INTERVAL '1 day')\n)",
+        "options": {
+          "queryReplacement": "={{ $json.data_vencimento }}"
+        }
+      },
+      "id": "c709023b-7506-45ef-b133-4d2a4586ca56",
+      "name": "Rateio Posto",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        340,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "Truckpag DW Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "clear",
+        "documentId": {
+          "__rl": true,
+          "value": "PREENCHER-ID-DA-PLANILHA",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Resumo",
+          "mode": "name"
+        },
+        "clear": "wholeSheet"
+      },
+      "id": "7a7cd3da-8276-4a53-970c-68c17336f0f7",
+      "name": "Limpar aba Resumo",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        620,
+        -140
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "PREENCHER credencial Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "PREENCHER-ID-DA-PLANILHA",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Resumo",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "id": "685ab215-b181-4cac-8eaa-17d2b9cc8a3a",
+      "name": "Escrever aba Resumo",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        860,
+        -140
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "PREENCHER credencial Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "clear",
+        "documentId": {
+          "__rl": true,
+          "value": "PREENCHER-ID-DA-PLANILHA",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Contabilidade",
+          "mode": "name"
+        },
+        "clear": "wholeSheet"
+      },
+      "id": "047756c9-6047-4a86-889d-28df8c92630f",
+      "name": "Limpar aba Contabilidade",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        620,
+        20
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "PREENCHER credencial Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "PREENCHER-ID-DA-PLANILHA",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Contabilidade",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "id": "91d0fa2b-7bac-4017-baeb-9688e7e043b3",
+      "name": "Escrever aba Contabilidade",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        860,
+        20
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "PREENCHER credencial Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "clear",
+        "documentId": {
+          "__rl": true,
+          "value": "PREENCHER-ID-DA-PLANILHA",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Relatorio",
+          "mode": "name"
+        },
+        "clear": "wholeSheet"
+      },
+      "id": "2cd9be89-978b-4772-aa8e-1a81b2d10379",
+      "name": "Limpar aba Relatorio",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        620,
+        180
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "PREENCHER credencial Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "PREENCHER-ID-DA-PLANILHA",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Relatorio",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "id": "355c1bd4-ba1f-4c3c-960f-5ffb4b468281",
+      "name": "Escrever aba Relatorio",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        860,
+        180
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "PREENCHER credencial Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "clear",
+        "documentId": {
+          "__rl": true,
+          "value": "PREENCHER-ID-DA-PLANILHA",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Rateio Garagem",
+          "mode": "name"
+        },
+        "clear": "wholeSheet"
+      },
+      "id": "befcc9f2-f300-4fce-811f-5e20b98c8065",
+      "name": "Limpar aba Rateio Garagem",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        620,
+        340
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "PREENCHER credencial Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "PREENCHER-ID-DA-PLANILHA",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Rateio Garagem",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "id": "ed593eab-b973-4599-94b3-b4da30d2a94f",
+      "name": "Escrever aba Rateio Garagem",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        860,
+        340
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "PREENCHER credencial Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "clear",
+        "documentId": {
+          "__rl": true,
+          "value": "PREENCHER-ID-DA-PLANILHA",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Rateio Posto",
+          "mode": "name"
+        },
+        "clear": "wholeSheet"
+      },
+      "id": "1d514a9a-8f2f-449f-a85e-418015fd2dd8",
+      "name": "Limpar aba Rateio Posto",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        620,
+        500
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "PREENCHER credencial Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "PREENCHER-ID-DA-PLANILHA",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Rateio Posto",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "id": "b59fa0b2-7206-4ff5-9cd1-66e058277f9b",
+      "name": "Escrever aba Rateio Posto",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        860,
+        500
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "PREENCHER credencial Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "options": {},
+        "combineBy": "combineByPosition"
+      },
+      "id": "ef2f59b6-78e5-44fc-a762-9c1fda5f448f",
+      "name": "Merge 1 (sincroniza)",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1140,
+        -140
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "options": {},
+        "combineBy": "combineByPosition"
+      },
+      "id": "1250b75c-fe2a-47d5-bf50-3116af68d120",
+      "name": "Merge 2 (sincroniza)",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1140,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "options": {},
+        "combineBy": "combineByPosition"
+      },
+      "id": "5f993fe7-390f-4907-b202-cbe029404648",
+      "name": "Merge 3 (sincroniza)",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1140,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "options": {},
+        "combineBy": "combineByPosition"
+      },
+      "id": "a4f13293-bed7-4a06-b060-8ec7547697d0",
+      "name": "Merge 4 (sincroniza)",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1140,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "PREENCHER-ID-DA-PLANILHA",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Info",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "data_vencimento": "={{ $('Fatura alvo').item.json.data_vencimento }}",
+            "atualizado_em": "={{ $now.toISO() }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "51c5df46-13d6-4727-ae48-7566dbdadbfd",
+      "name": "Escrever Info",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1380,
+        -60
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "PREENCHER credencial Google Sheets"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Teste manual": {
+      "main": [
+        [
+          {
+            "node": "Data de vencimento (teste)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Data de vencimento (teste)": {
+      "main": [
+        [
+          {
+            "node": "Fatura alvo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Toda quinta-feira": {
+      "main": [
+        [
+          {
+            "node": "Próxima fatura (auto)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Próxima fatura (auto)": {
+      "main": [
+        [
+          {
+            "node": "Fatura alvo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fatura alvo": {
+      "main": [
+        [
+          {
+            "node": "Tem fatura pendente?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tem fatura pendente?": {
+      "main": [
+        [
+          {
+            "node": "Resumo",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Contabilidade",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Relatorio",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Rateio Garagem",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Rateio Posto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resumo": {
+      "main": [
+        [
+          {
+            "node": "Limpar aba Resumo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contabilidade": {
+      "main": [
+        [
+          {
+            "node": "Limpar aba Contabilidade",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Relatorio": {
+      "main": [
+        [
+          {
+            "node": "Limpar aba Relatorio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rateio Garagem": {
+      "main": [
+        [
+          {
+            "node": "Limpar aba Rateio Garagem",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rateio Posto": {
+      "main": [
+        [
+          {
+            "node": "Limpar aba Rateio Posto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limpar aba Resumo": {
+      "main": [
+        [
+          {
+            "node": "Escrever aba Resumo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limpar aba Contabilidade": {
+      "main": [
+        [
+          {
+            "node": "Escrever aba Contabilidade",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limpar aba Relatorio": {
+      "main": [
+        [
+          {
+            "node": "Escrever aba Relatorio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limpar aba Rateio Garagem": {
+      "main": [
+        [
+          {
+            "node": "Escrever aba Rateio Garagem",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limpar aba Rateio Posto": {
+      "main": [
+        [
+          {
+            "node": "Escrever aba Rateio Posto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Escrever aba Resumo": {
+      "main": [
+        [
+          {
+            "node": "Merge 1 (sincroniza)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Escrever aba Contabilidade": {
+      "main": [
+        [
+          {
+            "node": "Merge 1 (sincroniza)",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge 1 (sincroniza)": {
+      "main": [
+        [
+          {
+            "node": "Merge 2 (sincroniza)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Escrever aba Relatorio": {
+      "main": [
+        [
+          {
+            "node": "Merge 2 (sincroniza)",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge 2 (sincroniza)": {
+      "main": [
+        [
+          {
+            "node": "Merge 3 (sincroniza)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Escrever aba Rateio Garagem": {
+      "main": [
+        [
+          {
+            "node": "Merge 3 (sincroniza)",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge 3 (sincroniza)": {
+      "main": [
+        [
+          {
+            "node": "Merge 4 (sincroniza)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Escrever aba Rateio Posto": {
+      "main": [
+        [
+          {
+            "node": "Merge 4 (sincroniza)",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge 4 (sincroniza)": {
+      "main": [
+        [
+          {
+            "node": "Escrever Info",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

@@ -1,5 +1,14 @@
 # Automação do export semanal (n8n)
 
+> **Histórico (27/08/2026)**: a entrega final desta automação (geração do
+> `.xlsx` + envio do e-mail) foi substituída pela versão em
+> [`automacao-fechamento-sheets.md`](automacao-fechamento-sheets.md) —
+> Google Sheets + Apps Script, pra não depender de mudança no Docker do n8n.
+> **Este documento continua valendo** pra tudo antes disso: as 5 queries
+> Postgres, o guard "Tem fatura pendente?", e principalmente os bugs de n8n
+> encontrados e corrigidos abaixo (o de timezone na comparação de data é o
+> mais importante — vale pra qualquer workflow Postgres deste ambiente).
+
 ## Objetivo
 
 Substituir o processo manual atual — copiar e colar o resultado das 3 tabelas/views numa aba e pedir pra uma IA arrumar números/formatação quebrada — por um workflow n8n (a mesma ferramenta já usada hoje pra manipulação de dados) que roda periodicamente (ex: toda quinta-feira), consulta as views de conciliação direto no DW e gera um arquivo já formatado corretamente.

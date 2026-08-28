@@ -22,7 +22,11 @@ Não espere aqui os elementos típicos de um CLAUDE.md de código (build/lint/te
 
 - **DW**: Postgres, schema `torre` — é o destino final dos dados (camada bronze/silver/gold; `torre.gold_dim_veiculo` já existe como dimensão gold).
 - **SQL Server**: usado pelo ERP **Bluefleet**. **Guardrail permanente**: nunca automatizar o lançamento de fatura no Bluefleet via banco ou API — decisão explícita do usuário, fica manual.
-- **n8n** é usado para orquestração/manipulação de dados — é a ferramenta escolhida pra automação do fechamento (ver `docs/automacao-fechamento.md`).
+- **n8n** faz só a extração (Postgres → Planilha Google); o envio de e-mail é
+  um **Apps Script** preso na planilha, não o n8n — decisão de 27/08/2026 pra
+  não depender de mudança no container Docker (ver
+  `docs/automacao-fechamento-sheets.md`, que é a versão atual; `docs/automacao-fechamento.md`
+  é o desenho anterior, mantido por causa dos bugs de n8n documentados lá).
 - **Data Studio / planilhas** são a camada de visualização pro negócio.
 - Fatura de **combustível** e de **pedágio** são títulos/numeração diferentes — toda a conciliação abaixo é só de combustível. Fechamento é **semanal**, ~R$500 mil por fatura em média.
 - Duas integrações Truckpag no DW: a **API legada** (tabelas `torre.integration_truckpag_*`, 100% funcional, alimenta as views de conciliação) e a **API nova** (doc em `referencia/API - TruckPag - Meios de Pagamentos.html`, 160 rotas em 23 categorias — só "analítico de transações" é consumida hoje, já com bronze+silver).
@@ -39,10 +43,13 @@ truckpag-fechamento-fatura/
 ├── docs/                      # documentação escrita
 │   ├── fechamento-fatura.md         # passo a passo do processo de fechamento
 │   ├── planilha-fechamento.md       # lógica de cada view/aba + gaps conhecidos (Leva 2, backfill)
-│   └── automacao-fechamento.md      # design da automação n8n (export + e-mail semanal)
+│   ├── automacao-fechamento.md      # desenho ANTERIOR (xlsx + e-mail dentro do n8n) -- historico, tem os bugs de n8n documentados
+│   └── automacao-fechamento-sheets.md  # desenho ATUAL (n8n so escreve, Apps Script manda o e-mail)
 ├── sql/fechamento_fatura/      # scripts SQL das views/tabela novas (rodar em ordem numérica no DW)
 ├── n8n/                         # workflows n8n exportados (.json) para importar
-│   └── fechamento-fatura-combustivel.json
+│   ├── fechamento-fatura-combustivel.json          # versao anterior (xlsx), historico
+│   ├── fechamento-fatura-combustivel-sheets.json   # versao atual (Google Sheets)
+│   └── EnviarFechamentoSemanal.gs                  # Apps Script -- colar em Extensões > Apps Script na planilha
 └── ingestao/                    # reservado para os scripts/workflows de API nova -> bronze (ainda vazio)
 ```
 
@@ -61,8 +68,9 @@ segredos, nunca exibir em chat/commits):
 ## Estado atual / próximos passos
 
 - [x] `docs/fechamento-fatura.md` e `docs/planilha-fechamento.md` preenchidos com o processo e a lógica das views.
-- [x] Design da automação n8n do fechamento semanal (`docs/automacao-fechamento.md`) + SQL das views novas + workflow `.json` de rascunho.
-- [ ] Rodar os scripts em `sql/fechamento_fatura/` no DW e validar contra a planilha de referência.
-- [ ] Importar/testar o workflow n8n (`n8n/fechamento-fatura-combustivel.json`) usando a fatura com vencimento 02/09/2026 como teste.
+- [x] SQL das views novas (`sql/fechamento_fatura/`) — rodado e validado contra a fatura 271797 (ver achados em `docs/automacao-fechamento.md`).
+- [x] Primeira versão da automação n8n (xlsx + e-mail direto no n8n) — testada e funcionando, mas exigia mudança de infra no container Docker pra gerar xlsx com várias abas.
+- [x] Pivô pra Google Sheets + Apps Script (27/08/2026) — `docs/automacao-fechamento-sheets.md`, `n8n/fechamento-fatura-combustivel-sheets.json`, `n8n/EnviarFechamentoSemanal.gs`. Grafo do workflow validado programaticamente (sem node órfão, sem conexão quebrada), mas **nunca importado/rodado de verdade no n8n** — os parâmetros do node Google Sheets foram escritos batendo com a fonte oficial do n8n, não testados ao vivo.
+- [ ] **Próximo passo real**: criar a Planilha Google (6 abas — ver `automacao-fechamento-sheets.md`), importar o workflow novo, configurar credenciais, rodar o plano de teste (fatura 02/09/2026) documentado lá.
 - [ ] Definir escopo e priorizar rotas da API nova pra ingestão na bronze (ver `ingestao/README.md`).
 - [ ] Eventual versão melhorada/substituição da planilha de fechamento.
