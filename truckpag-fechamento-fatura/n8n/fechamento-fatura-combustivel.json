@@ -1,0 +1,531 @@
+{
+  "name": "Fechamento Fatura Combustível - Truckpag",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trigger-manual-teste",
+      "name": "Teste manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -400,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "assign-data-teste",
+              "name": "data_vencimento",
+              "value": "2026-09-02",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-data-teste",
+      "name": "Data de vencimento (teste)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -160,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": [
+                4
+              ],
+              "triggerAtHour": 8
+            }
+          ]
+        }
+      },
+      "id": "trigger-schedule",
+      "name": "Toda quinta-feira",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -400,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT to_char(MIN(titulo_data_vencimento), 'YYYY-MM-DD') AS data_vencimento\nFROM torre.vw_conciliacao_truckpag_contabilidade\nWHERE titulo_data_vencimento >= CURRENT_DATE;",
+        "options": {}
+      },
+      "id": "postgres-auto-detect",
+      "name": "Próxima fatura (auto)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -160,
+        220
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "Truckpag DW Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "noop-fatura-alvo",
+      "name": "Fatura alvo",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        80,
+        110
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "cond-data-nao-vazia",
+              "leftValue": "={{ $json.data_vencimento }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "filter-tem-fatura",
+      "name": "Tem fatura pendente?",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        220,
+        110
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM torre.vw_conciliacao_truckpag_resumo_v2\nWHERE fatura IN (\n  SELECT DISTINCT fatura_atual FROM torre.vw_conciliacao_truckpag_contabilidade_ajustada\n  WHERE titulo_data_vencimento >= $1::date\n  AND titulo_data_vencimento < ($1::date + INTERVAL '1 day')\n)\nORDER BY ord",
+        "options": {
+          "queryReplacement": "={{ $json.data_vencimento }}"
+        }
+      },
+      "id": "postgres-resumo",
+      "name": "Resumo",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        340,
+        -140
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "Truckpag DW Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM torre.vw_conciliacao_truckpag_contabilidade_ajustada\nWHERE titulo_data_vencimento >= $1::date\n  AND titulo_data_vencimento < ($1::date + INTERVAL '1 day')",
+        "options": {
+          "queryReplacement": "={{ $json.data_vencimento }}"
+        }
+      },
+      "id": "postgres-contabilidade",
+      "name": "Contabilidade",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        340,
+        20
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "Truckpag DW Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM torre.vw_conciliacao_truckpag_relatorio\nWHERE titulo_data_vencimento >= $1::date\n  AND titulo_data_vencimento < ($1::date + INTERVAL '1 day')",
+        "options": {
+          "queryReplacement": "={{ $json.data_vencimento }}"
+        }
+      },
+      "id": "postgres-relatorio",
+      "name": "Relatorio",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        340,
+        180
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "Truckpag DW Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM torre.vw_conciliacao_truckpag_rateio_garagem\nWHERE fatura IN (\n  SELECT DISTINCT fatura_atual FROM torre.vw_conciliacao_truckpag_contabilidade_ajustada\n  WHERE titulo_data_vencimento >= $1::date\n  AND titulo_data_vencimento < ($1::date + INTERVAL '1 day')\n)",
+        "options": {
+          "queryReplacement": "={{ $json.data_vencimento }}"
+        }
+      },
+      "id": "postgres-rateio-garagem",
+      "name": "Rateio Garagem",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        340,
+        340
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "Truckpag DW Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM torre.vw_conciliacao_truckpag_rateio_posto\nWHERE fatura IN (\n  SELECT DISTINCT fatura_atual FROM torre.vw_conciliacao_truckpag_contabilidade_ajustada\n  WHERE titulo_data_vencimento >= $1::date\n  AND titulo_data_vencimento < ($1::date + INTERVAL '1 day')\n)",
+        "options": {
+          "queryReplacement": "={{ $json.data_vencimento }}"
+        }
+      },
+      "id": "postgres-rateio-posto",
+      "name": "Rateio Posto",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        340,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "Truckpag DW Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "options": {},
+        "combineBy": "combineByPosition"
+      },
+      "id": "merge-1",
+      "name": "Merge 1 (Resumo+Contabilidade)",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        900,
+        -60
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "options": {},
+        "combineBy": "combineByPosition"
+      },
+      "id": "merge-2",
+      "name": "Merge 2 (+Relatorio)",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1140,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "options": {},
+        "combineBy": "combineByPosition"
+      },
+      "id": "merge-3",
+      "name": "Merge 3 (+Rateio Garagem)",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1380,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "options": {},
+        "combineBy": "combineByPosition"
+      },
+      "id": "merge-4",
+      "name": "Merge 4 (+Rateio Posto)",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1620,
+        350
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "PREENCHER@empresa.com.br",
+        "toEmail": "PREENCHER-destinatario@empresa.com.br",
+        "subject": "=Fechamento fatura combustível Truckpag - vencimento {{ $('Fatura alvo').item.json.data_vencimento }}",
+        "text": "Segue em anexo o pacote de conciliação da fatura de combustível Truckpag (Resumo, Contabilidade, Relatorio, Rateio por Garagem e Rateio por Posto).\n\nGerado automaticamente pelo workflow de fechamento.",
+        "options": {
+          "fileAttachments": "planilha_fechamento"
+        }
+      },
+      "id": "send-email",
+      "name": "Enviar e-mail",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1860,
+        350
+      ],
+      "credentials": {
+        "smtp": {
+          "name": "PREENCHER credencial SMTP"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const XLSX = require('xlsx');\n\nfunction addSheet(wb, sheetName, items) {\n  const rows = items.map((item) => item.json);\n  const ws = XLSX.utils.json_to_sheet(rows);\n  XLSX.utils.book_append_sheet(wb, ws, sheetName);\n}\n\nconst wb = XLSX.utils.book_new();\n\naddSheet(wb, 'Resumo', $('Resumo').all());\naddSheet(wb, 'Contabilidade', $('Contabilidade').all());\naddSheet(wb, 'Relatorio', $('Relatorio').all());\naddSheet(wb, 'Rateio Garagem', $('Rateio Garagem').all());\naddSheet(wb, 'Rateio Posto', $('Rateio Posto').all());\n\nconst buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });\n\nconst dataVencimento = $('Fatura alvo').first().json.data_vencimento;\nconst fileName = `Fechamento_Fatura_Combustivel_${dataVencimento}.xlsx`;\n\nconst binaryData = await this.helpers.prepareBinaryData(\n  buffer,\n  fileName,\n  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'\n);\n\nreturn [{ json: { data_vencimento: dataVencimento }, binary: { planilha_fechamento: binaryData } }];\n"
+      },
+      "id": "code-montar-xlsx",
+      "name": "Montar XLSX (5 abas)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        110
+      ]
+    }
+  ],
+  "connections": {
+    "Teste manual": {
+      "main": [
+        [
+          {
+            "node": "Data de vencimento (teste)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Data de vencimento (teste)": {
+      "main": [
+        [
+          {
+            "node": "Fatura alvo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Toda quinta-feira": {
+      "main": [
+        [
+          {
+            "node": "Próxima fatura (auto)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Próxima fatura (auto)": {
+      "main": [
+        [
+          {
+            "node": "Fatura alvo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fatura alvo": {
+      "main": [
+        [
+          {
+            "node": "Tem fatura pendente?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tem fatura pendente?": {
+      "main": [
+        [
+          {
+            "node": "Resumo",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Contabilidade",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Relatorio",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Rateio Garagem",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Rateio Posto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resumo": {
+      "main": [
+        [
+          {
+            "node": "Merge 1 (Resumo+Contabilidade)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contabilidade": {
+      "main": [
+        [
+          {
+            "node": "Merge 1 (Resumo+Contabilidade)",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Relatorio": {
+      "main": [
+        [
+          {
+            "node": "Merge 2 (+Relatorio)",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Rateio Garagem": {
+      "main": [
+        [
+          {
+            "node": "Merge 3 (+Rateio Garagem)",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Rateio Posto": {
+      "main": [
+        [
+          {
+            "node": "Merge 4 (+Rateio Posto)",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge 1 (Resumo+Contabilidade)": {
+      "main": [
+        [
+          {
+            "node": "Merge 2 (+Relatorio)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge 2 (+Relatorio)": {
+      "main": [
+        [
+          {
+            "node": "Merge 3 (+Rateio Garagem)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge 3 (+Rateio Garagem)": {
+      "main": [
+        [
+          {
+            "node": "Merge 4 (+Rateio Posto)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge 4 (+Rateio Posto)": {
+      "main": [
+        [
+          {
+            "node": "Montar XLSX (5 abas)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar XLSX (5 abas)": {
+      "main": [
+        [
+          {
+            "node": "Enviar e-mail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

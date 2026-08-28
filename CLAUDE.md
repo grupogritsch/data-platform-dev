@@ -76,6 +76,30 @@ The 3S SOAP API (`data_export.asmx`) has three distinct calling conventions, enc
 
 Postman collections for both the legacy SOAP API (in production) and the newer REST API (blocked pending 3S permissions) are under `postman/` — read `postman/README.md` before touching 3S integration; it documents which endpoints are live.
 
+### Fechamento de fatura TruckPag (`truckpag-fechamento-fatura/`)
+Sub-projeto separado, trazido pra cá em 27/08/2026 (antes vivia numa pasta
+solta `Truckpag/`, fora deste repo) — é sobre a **conciliação/fechamento da
+fatura de combustível** da TruckPag (cobrança/contabilidade, ~R$500 mil por
+fatura, fechamento semanal), não sobre os relatórios de e-mail da Torre de
+Controle (ver `docs/torre-controle-relatorios-email.md` pra aquele outro
+assunto — são independentes, mesma fonte de dados TruckPag). Tem seu próprio
+`CLAUDE.md` dentro da pasta com o contexto completo. Pontos que valem estar
+aqui também:
+- **Guardrail permanente**: nunca automatizar o lançamento de fatura no
+  Bluefleet (SQL Server) via banco ou API — decisão explícita do usuário,
+  fica sempre manual.
+- Fatura de combustível e de pedágio são títulos/numeração diferentes na
+  TruckPag — a conciliação em `truckpag-fechamento-fatura/` é só de
+  combustível.
+- Duas integrações TruckPag distintas no DW: a API legada
+  (`torre.integration_truckpag_*`, 100% funcional, alimenta as views de
+  conciliação) e a API nova (documentada em
+  `truckpag-fechamento-fatura/referencia/`, 160 rotas — só "analítico de
+  transações" é consumida hoje). Não confundir com `torre.gold_truckpag_combustivel`,
+  usada pelos relatórios de e-mail — são objetos diferentes no mesmo schema.
+- Variáveis de ambiente próprias desse sub-projeto (SQL Server do Bluefleet,
+  API nova da TruckPag) — ver `.env.example`.
+
 ### Docker network vs host network
 Inside `docker-compose.yml`, n8n talks to Postgres as `postgres:5432` (Docker network) using `${POSTGRES_USER}`/`${POSTGRES_PASSWORD}`. From the host (Python scripts, `psql` from a terminal, pgAdmin), it's `localhost:5433` or the LAN IP `192.168.0.37:5433`. The 3S webservice credentials (`TRES_S_USUARIO`/`TRES_S_SENHA`) are **not** read via n8n env vars in production — see the long comment block in `docker-compose.yml` explaining two failed approaches (env var access blocked in prod n8n; native credential injected a header 3S's endpoint rejected) — the working approach is hardcoded literals pasted into each workflow's "Monta XML SOAP" Code node after import, deliberately not versioned in git.
 
